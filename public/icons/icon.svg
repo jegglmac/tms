@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="#3b82f6">
+  <rect x="0" y="0" width="512" height="512" fill="#3b82f6" rx="80"/>
+  <g fill="white">
+    <!-- Truck icon -->
+    <path d="M96 96h160v128H96V96zm0 160h160v64H96v-64z"/>
+    <path d="M288 128h96l32 96v96h-32v-32h-96v32h-32V128z"/>
+    <circle cx="144" cy="352" r="32"/>
+    <circle cx="368" cy="352" r="32"/>
+    <text x="256" y="450" text-anchor="middle" font-family="Arial, sans-serif" font-size="48" font-weight="bold">TMS</text>
+  </g>
+</svg>

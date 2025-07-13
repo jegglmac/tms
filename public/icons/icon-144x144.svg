@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 144">
+    <rect width="144" height="144" fill="#3b82f6" rx="21.599999999999998"/>
+    <g fill="white" transform="translate(14.4, 14.4)">
+      <rect x="0" y="14.4" width="72" height="36" rx="2.88"/>
+      <rect x="0" y="57.6" width="72" height="21.599999999999998" rx="2.88"/>
+      <path d="M79.2 21.599999999999998h36l11.52 28.8v28.8h-11.52v-11.52h-36v11.52h-11.52V21.599999999999998z"/>
+      <circle cx="36" cy="93.60000000000001" r="8.64"/>
+      <circle cx="93.60000000000001" cy="93.60000000000001" r="8.64"/>
+      <text x="57.6" y="122.39999999999999" text-anchor="middle" font-family="Arial" font-size="11.52" font-weight="bold">TMS</text>
+    </g>
+  </svg>
