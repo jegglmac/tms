@@ -1,10 +1,4 @@
 {
-  "rewrites": [
-    {
-      "source": "/sw.js",
-      "destination": "/_next/static/sw.js"
-    }
-  ],
   "headers": [
     {
       "source": "/sw.js",

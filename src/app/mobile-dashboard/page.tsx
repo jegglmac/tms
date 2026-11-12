@@ -20,7 +20,6 @@ import {
   GlobeAltIcon,
   DocumentTextIcon
 } from '@heroicons/react/24/outline';
-import MobileNewShipmentModal from '@/components/MobileNewShipmentModal';
 
 interface MobileNavItem {
   name: string;
@@ -33,7 +32,6 @@ interface MobileNavItem {
 
 export default function MobileDashboard() {
   const [showMobileMenu, setShowMobileMenu] = useState(false);
-  const [showNewShipmentModal, setShowNewShipmentModal] = useState(false);
   const [buttonFeedback, setButtonFeedback] = useState<string>('');
   const [todayShipments, setTodayShipments] = useState(12); // Default value
   const [mounted, setMounted] = useState(false);
@@ -48,12 +46,9 @@ export default function MobileDashboard() {
   const handleQuickAction = (actionName: string) => {
     switch (actionName) {
       case 'New Shipment':
-        setButtonFeedback('🚛 Opening shipment creation wizard...');
-        setTimeout(() => {
-          setShowNewShipmentModal(true);
-          setButtonFeedback('');
-        }, 500);
+        window.location.assign('/dispatch');
         break;
+
       case 'Route Test':
         setButtonFeedback('🗺️ Initializing route test...');
         setTimeout(() => {
@@ -376,17 +371,6 @@ export default function MobileDashboard() {
           </div>
         </div>
       </div>
-
-      {/* New Shipment Modal */}
-      <MobileNewShipmentModal
-        isOpen={showNewShipmentModal}
-        onClose={() => setShowNewShipmentModal(false)}
-        onShipmentCreated={() => {
-          setShowNewShipmentModal(false);
-          setButtonFeedback('✅ Shipment created successfully!');
-          setTimeout(() => setButtonFeedback(''), 3000);
-        }}
-      />
 
       {/* Bottom Navigation Bar for Mobile */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-30">
