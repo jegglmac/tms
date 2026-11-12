@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
 import { database } from "@/lib/supabase/server";
-import { isInvalidSession, isMissingSession, isRestTokenRejection, logAuthorizationFailure } from "./authorization-diagnostics";
+import { DispatcherSessionUnavailable, isInvalidSession, isMissingSession, isRestTokenRejection, logAuthorizationFailure } from "./authorization-diagnostics";
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -10,12 +10,12 @@ export async function signedInDispatcher() {
   const client = await database();
   if (!client) {
     logAuthorizationFailure("session", started, undefined);
-    throw new Error("Dispatcher session could not be verified.");
+    throw new DispatcherSessionUnavailable();
   }
 
   const { data, error } = await client.auth.getClaims().catch((error: unknown) => ({ data: null, error }));
   if (error && !isMissingSession(error)) logAuthorizationFailure("session", started, error);
-  if (error && !isInvalidSession(error)) throw new Error("Dispatcher session could not be verified.");
+  if (error && !isInvalidSession(error)) throw new DispatcherSessionUnavailable();
   if (error || !data?.claims.sub) redirect("/sign-in");
   return { client, userId: data.claims.sub };
 }

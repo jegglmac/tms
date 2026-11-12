@@ -1,13 +1,19 @@
 const invalidSessionCodes = [
   "bad_jwt", "refresh_token_already_used", "refresh_token_not_found", "session_expired", "session_not_found",
 ] as const;
-const tokenRejectionCodes = ["PGRST301", "PGRST302", "PGRST303"] as const;
+const tokenRejectionCodes = ["PGRST301", "PGRST303"] as const;
 const safeCodes: readonly string[] = [
   ...invalidSessionCodes, ...tokenRejectionCodes,
   "request_timeout", "over_request_rate_limit", "unexpected_failure",
-  "PGRST000", "PGRST001", "PGRST002", "PGRST003", "PGRST202", "42501", "57014",
+  "PGRST302", "PGRST000", "PGRST001", "PGRST002", "PGRST003", "PGRST202", "42501", "57014",
 ];
 type Stage = "proxy_session" | "session" | "company_rpc";
+
+export class DispatcherSessionUnavailable extends Error {
+  constructor() {
+    super("Dispatcher session could not be verified.");
+  }
+}
 
 function property(error: unknown, key: "code" | "name" | "status"): unknown {
   if (!error || typeof error !== "object") return undefined;

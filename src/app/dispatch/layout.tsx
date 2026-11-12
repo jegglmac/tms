@@ -1,11 +1,19 @@
 import Link from "next/link";
 import { signedInDispatcher } from "@/lib/dispatch/access";
+import { DispatcherSessionUnavailable } from "@/lib/dispatch/authorization-diagnostics";
+import DispatchError from "./error";
 import { signOut } from "@/app/sign-in/actions";
 
 export const dynamic = "force-dynamic";
 
 export default async function DispatchLayout({ children }: { children: React.ReactNode }) {
-  await signedInDispatcher();
+  try {
+    await signedInDispatcher();
+  } catch (error) {
+    if (!(error instanceof DispatcherSessionUnavailable)) throw error;
+    // This segment's error boundary covers its children, but cannot catch its layout.
+    return <main className="mx-auto max-w-5xl px-4 py-6"><DispatchError /></main>;
+  }
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
       <header className="border-b bg-white">

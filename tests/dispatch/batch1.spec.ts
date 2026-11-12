@@ -316,7 +316,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
   const marker = "SYNTHETIC_UPSTREAM_SECRET_MARKER";
   const output: string[] = [];
   let rpcFault: { status: number; code: string } | undefined;
-  let rejectRefresh = false;
+  let refreshFault: { status: number; code: string } | undefined;
   let saveCalls = 0;
   let refreshCalls = 0;
 
@@ -332,7 +332,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     if (endpoint.pathname === "/rest/v1/rpc/tms_save_load") saveCalls++;
     if (refresh) refreshCalls++;
     const fault = companyCheck ? rpcFault :
-      refresh && rejectRefresh ? { status: 400, code: "refresh_token_not_found" } : undefined;
+      refresh ? refreshFault : undefined;
 
     if (fault) {
       incoming.resume();
@@ -412,7 +412,15 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     const cookieValue = "base64-" + Buffer.from(JSON.stringify(expiredSession)).toString("base64url");
     await page.context().clearCookies({ name: /-auth-token(?:\.\d+)?$/ });
     await page.context().addCookies([{ name: cookieName, value: cookieValue, url: base, httpOnly: true }]);
-    rejectRefresh = true;
+    refreshFault = { status: 429, code: "over_request_rate_limit" };
+    await page.goto(companyPath);
+    await expect(page.getByRole("heading", { name: "Dispatch could not be loaded" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    await expect.poll(diagnostics).toContainEqual(expect.objectContaining({
+      stage: "session", code: "over_request_rate_limit", status: 429,
+    }));
+
+    refreshFault = { status: 400, code: "refresh_token_not_found" };
     await page.goto(companyPath);
     await expect(page).toHaveURL(/\/sign-in$/);
     expect(refreshCalls).toBeGreaterThan(0);
@@ -425,7 +433,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
         event: "dispatch_authorization_failure", stage: expect.stringMatching(/^(proxy_session|session|company_rpc)$/),
         timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         correlationId: expect.stringMatching(/^[a-f0-9-]{36}$/), elapsedMs: expect.any(Number),
-        ...(entry.code === undefined ? {} : { code: expect.stringMatching(/^(PGRST301|refresh_token_not_found)$/) }),
+        ...(entry.code === undefined ? {} : { code: expect.stringMatching(/^(PGRST301|refresh_token_not_found|over_request_rate_limit)$/) }),
         ...(entry.status === undefined ? {} : { status: expect.any(Number) }),
       });
       expect(entry.elapsedMs).toBeGreaterThanOrEqual(0);
