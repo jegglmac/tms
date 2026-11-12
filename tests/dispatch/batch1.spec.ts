@@ -46,9 +46,15 @@ async function startApp(command: "start" | "dev" = "start", gateway?: { url: str
 
 async function stopApp() {
   if (!app || app.exitCode !== null || app.signalCode !== null) return;
-  const exited = once(app, "exit");
-  app.kill("SIGTERM");
-  await exited;
+  const running = app;
+  const exited = once(running, "exit");
+  const forceStop = setTimeout(() => running.kill("SIGKILL"), 5_000);
+  try {
+    running.kill("SIGTERM");
+    await exited;
+  } finally {
+    clearTimeout(forceStop);
+  }
 }
 
 async function seedTenant(id: string, email: string, client: typeof a) {
@@ -461,6 +467,8 @@ test("draft forms have distinct keys and Mark Ready clears without a reload in d
 
 test("authorization failures stay closed and log only safe metadata", async ({ page }) => {
   test.setTimeout(90_000);
+  page.setDefaultTimeout(10_000);
+  page.setDefaultNavigationTimeout(10_000);
   const marker = "SYNTHETIC_UPSTREAM_SECRET_MARKER";
   const output: string[] = [];
   let rpcFault: { status: number; code: string } | undefined;
@@ -552,8 +560,8 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     await page.goto(companyPath);
     await expect(page.getByRole("heading", { name: "Dispatch Center" })).toBeVisible();
 
-    await page.getByRole("link", { name: "Drivers", exact: true }).click();
-    await page.getByRole("link", { name: "New driver" }).click();
+    await page.goto(`${companyPath}/drivers?record=new`);
+    await expect(page.getByRole("heading", { name: "New driver" })).toBeVisible();
     const blockedDriver = `Blocked ${randomUUID()}`;
     await page.getByLabel("Driver name").fill(blockedDriver);
     rpcFault = { status: 503, code: marker };
@@ -607,7 +615,9 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     expect(output.join("").includes(marker)).toBe(false);
   } finally {
     await stopApp();
+    const closed = once(gateway, "close");
+    gateway.close();
     gateway.closeAllConnections();
-    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+    await closed;
   }
 });
