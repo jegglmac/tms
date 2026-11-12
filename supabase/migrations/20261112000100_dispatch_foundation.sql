@@ -291,6 +291,9 @@ begin
 end;
 $$;
 
+revoke all on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) from public, anon, authenticated;
+grant execute on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) to authenticated;
+
 -- The Supabase migration role is not a superuser. Temporarily allow it to
 -- assign function ownership to the restricted role it created.
 grant tms_dispatch_executor to current_user with set true;
@@ -298,6 +301,4 @@ grant create on schema public to tms_dispatch_executor;
 alter function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) owner to tms_dispatch_executor;
 revoke create on schema public from tms_dispatch_executor;
 revoke set option for tms_dispatch_executor from current_user;
-revoke all on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) from public, anon, authenticated;
-grant execute on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) to authenticated;
 commit;
