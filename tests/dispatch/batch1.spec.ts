@@ -464,6 +464,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
   let rpcFault: { status: number; code: string } | undefined;
   let refreshFault: { status: number; code: string } | undefined;
   let saveCalls = 0;
+  let rosterSaveCalls = 0;
   let refreshCalls = 0;
 
   const gateway = createServer((incoming, outgoing) => {
@@ -476,6 +477,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     const companyCheck = endpoint.pathname === "/rest/v1/rpc/tms_can_dispatch";
     const refresh = endpoint.pathname === "/auth/v1/token" && endpoint.searchParams.get("grant_type") === "refresh_token";
     if (endpoint.pathname === "/rest/v1/rpc/tms_save_load") saveCalls++;
+    if (endpoint.pathname === "/rest/v1/rpc/tms_save_roster") rosterSaveCalls++;
     if (refresh) refreshCalls++;
     const fault = companyCheck ? rpcFault :
       refresh ? refreshFault : undefined;
@@ -544,6 +546,22 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     noError(missing.error);
     expect(missing.data).toEqual([]);
 
+    rpcFault = undefined;
+    await page.goto(companyPath);
+    await expect(page.getByRole("heading", { name: "Dispatch Center" })).toBeVisible();
+
+    await page.getByRole("link", { name: "Drivers", exact: true }).click();
+    await page.getByRole("link", { name: "New driver" }).click();
+    const blockedDriver = `Blocked ${randomUUID()}`;
+    await page.getByLabel("Driver name").fill(blockedDriver);
+    rpcFault = { status: 503, code: marker };
+    const rosterBefore = rosterSaveCalls;
+    await page.getByRole("button", { name: "Save driver" }).click();
+    await expect(page.getByRole("heading", { name: "Dispatch could not be loaded" })).toBeVisible();
+    expect(rosterSaveCalls).toBe(rosterBefore);
+    const missingDriver = await a.from("drivers").select("id").eq("display_name", blockedDriver);
+    noError(missingDriver.error);
+    expect(missingDriver.data).toEqual([]);
     rpcFault = undefined;
     await page.goto(companyPath);
     await expect(page.getByRole("heading", { name: "Dispatch Center" })).toBeVisible();

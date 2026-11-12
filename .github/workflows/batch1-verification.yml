@@ -41,9 +41,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          roster_migration=supabase/migrations/20261112000200_company_rosters.sql
+          mv "$roster_migration" "$RUNNER_TEMP/company_rosters.sql"
           npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { grep -iE 'error|SQLSTATE|applying migration|failed' "$RUNNER_TEMP/supabase-start.log" | head -25 || true; tail -12 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
           status="$(npx supabase status -o json)"
           export SUPABASE_URL=http://127.0.0.1:54321
           export SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"
           export TMS_TEST_SUPABASE_SERVICE_KEY="$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$status")"
+          npx playwright test --grep "deduplicates simultaneous submits"
+          db_url="$(jq -er '.DB_URL' <<< "$status")"
+          case "$db_url" in postgres*://*@127.0.0.1:54322/*) ;; *) echo "Expected disposable loopback database"; exit 1 ;; esac
+          fingerprint() {
+            psql "$db_url" -v ON_ERROR_STOP=1 -Atc "select count(*) || ':' || coalesce(md5(string_agg(row_to_json(loads)::text, '' order by company_id, id)), '') from public.loads"
+          }
+          before="$(fingerprint)"
+          test "${before%%:*}" -gt 0
+          mv "$RUNNER_TEMP/company_rosters.sql" "$roster_migration"
+          npx supabase migration up --local
+          test "$(fingerprint)" = "$before"
+          echo "Verified Batch 1A load records are unchanged after the roster migration."
           npx playwright test
