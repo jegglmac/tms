@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
+import { createServer, request } from "node:http";
 
 const url = process.env.SUPABASE_URL ?? "";
 const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
@@ -28,11 +29,16 @@ function noError(error: unknown) {
   expect(error).toBeNull();
 }
 
-async function startApp(command: "start" | "dev" = "start") {
+async function startApp(command: "start" | "dev" = "start", gateway?: { url: string; output: string[] }) {
   const appEnv = { ...process.env };
   delete appEnv.TMS_TEST_SUPABASE_SERVICE_KEY;
+  if (gateway) appEnv.SUPABASE_URL = gateway.url;
   app = spawn(process.execPath, ["node_modules/next/dist/bin/next", command, "--hostname", "127.0.0.1"],
-    { env: appEnv, stdio: "inherit" });
+    { env: appEnv, stdio: gateway ? "pipe" : "inherit" });
+  if (gateway) {
+    app.stdout?.on("data", (chunk: Buffer) => gateway.output.push(chunk.toString()));
+    app.stderr?.on("data", (chunk: Buffer) => gateway.output.push(chunk.toString()));
+  }
   await expect.poll(async () => {
     try { return (await fetch(`${base}/sign-in`)).status; } catch { return 0; }
   }, { timeout: 30_000 }).toBe(200);
@@ -303,4 +309,131 @@ test("draft forms have distinct keys and Mark Ready clears without a reload in d
   await expect(page.getByRole("button", { name: /Saving/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save load" })).toBeEnabled();
   expect(duplicateKeys).toEqual([]);
+});
+
+test("authorization failures stay closed and log only safe metadata", async ({ page }) => {
+  test.setTimeout(90_000);
+  const marker = "SYNTHETIC_UPSTREAM_SECRET_MARKER";
+  const output: string[] = [];
+  let rpcFault: { status: number; code: string } | undefined;
+  let rejectRefresh = false;
+  let saveCalls = 0;
+  let refreshCalls = 0;
+
+  const gateway = createServer((incoming, outgoing) => {
+    const endpoint = new URL(incoming.url ?? "/", url);
+    if (endpoint.origin !== url) {
+      incoming.resume();
+      outgoing.writeHead(400).end();
+      return;
+    }
+    const companyCheck = endpoint.pathname === "/rest/v1/rpc/tms_can_dispatch";
+    const refresh = endpoint.pathname === "/auth/v1/token" && endpoint.searchParams.get("grant_type") === "refresh_token";
+    if (endpoint.pathname === "/rest/v1/rpc/tms_save_load") saveCalls++;
+    if (refresh) refreshCalls++;
+    const fault = companyCheck ? rpcFault :
+      refresh && rejectRefresh ? { status: 400, code: "refresh_token_not_found" } : undefined;
+
+    if (fault) {
+      incoming.resume();
+      outgoing.writeHead(fault.status, { "content-type": "application/json" });
+      outgoing.end(JSON.stringify({
+        code: fault.code, error_code: fault.code, message: marker, msg: marker, details: marker, hint: marker,
+      }));
+      return;
+    }
+
+    const upstream = request(endpoint, {
+      method: incoming.method,
+      headers: { ...incoming.headers, host: endpoint.host },
+    }, (response) => {
+      outgoing.writeHead(response.statusCode ?? 502, response.headers);
+      response.pipe(outgoing);
+    });
+    upstream.on("error", () => {
+      if (!outgoing.headersSent) outgoing.writeHead(502);
+      outgoing.end();
+    });
+    incoming.pipe(upstream);
+  });
+  gateway.listen(0, "127.0.0.1");
+  await once(gateway, "listening");
+  const address = gateway.address();
+  if (!address || typeof address === "string") throw new Error("Missing disposable gateway port");
+  const testGateway = { url: `http://127.0.0.1:${address.port}`, output };
+  const diagnostics = () => output.join("").split("\n").flatMap((line) => {
+    const json = line.match(/\{"event":"dispatch_authorization_failure".*\}/)?.[0];
+    return json ? [JSON.parse(json)] : [];
+  });
+
+  try {
+    await stopApp();
+    await startApp("start", testGateway);
+    await login(page);
+    const companyPath = `/dispatch/${companyA}`;
+    const denied = await page.goto(`/dispatch/${companyB}`);
+    expect(denied?.status()).toBe(404);
+    await expect(page.getByText("This page could not be found.")).toBeVisible();
+
+    rpcFault = { status: 401, code: "PGRST301" };
+    await page.goto(companyPath);
+    await expect(page).toHaveURL(/\/sign-in$/);
+    await expect.poll(diagnostics).toContainEqual(expect.objectContaining({
+      stage: "company_rpc", status: 401, code: "PGRST301",
+    }));
+
+    rpcFault = undefined;
+    await login(page);
+    await page.getByRole("link", { name: "New load" }).click();
+    const reference = `Blocked-${randomUUID()}`;
+    await fill(page, reference);
+    rpcFault = { status: 503, code: marker };
+    const before = saveCalls;
+    await page.getByRole("button", { name: "Save load" }).click();
+    await expect.poll(diagnostics).toContainEqual(expect.objectContaining({ stage: "company_rpc", status: 503 }));
+    await expect(page.getByRole("heading", { name: "Dispatch could not be loaded" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+    expect(saveCalls).toBe(before);
+    const missing = await a.from("loads").select("id").eq("reference", reference);
+    noError(missing.error);
+    expect(missing.data).toEqual([]);
+
+    rpcFault = undefined;
+    await page.goto(companyPath);
+    await expect(page.getByRole("heading", { name: "Dispatch Center" })).toBeVisible();
+
+    const authCookies = (await page.context().cookies(base)).filter((cookie) => /-auth-token(?:\.\d+)?$/.test(cookie.name));
+    expect(authCookies.length).toBeGreaterThan(0);
+    const cookieName = authCookies[0].name.replace(/\.\d+$/, "");
+    const { data, error } = await a.auth.getSession();
+    noError(error);
+    expect(data.session).not.toBeNull();
+    const expiredSession = { ...data.session, expires_at: 1, refresh_token: marker };
+    const cookieValue = "base64-" + Buffer.from(JSON.stringify(expiredSession)).toString("base64url");
+    await page.context().clearCookies({ name: /-auth-token(?:\.\d+)?$/ });
+    await page.context().addCookies([{ name: cookieName, value: cookieValue, url: base, httpOnly: true }]);
+    rejectRefresh = true;
+    await page.goto(companyPath);
+    await expect(page).toHaveURL(/\/sign-in$/);
+    expect(refreshCalls).toBeGreaterThan(0);
+    await expect.poll(diagnostics).toContainEqual(expect.objectContaining({
+      stage: "proxy_session", code: "refresh_token_not_found", status: 400,
+    }));
+
+    for (const entry of diagnostics()) {
+      expect(entry).toEqual({
+        event: "dispatch_authorization_failure", stage: expect.stringMatching(/^(proxy_session|session|company_rpc)$/),
+        timestamp: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+        correlationId: expect.stringMatching(/^[a-f0-9-]{36}$/), elapsedMs: expect.any(Number),
+        ...(entry.code === undefined ? {} : { code: expect.stringMatching(/^(PGRST301|refresh_token_not_found)$/) }),
+        ...(entry.status === undefined ? {} : { status: expect.any(Number) }),
+      });
+      expect(entry.elapsedMs).toBeGreaterThanOrEqual(0);
+    }
+    expect(output.join("").includes(marker)).toBe(false);
+  } finally {
+    await stopApp();
+    gateway.closeAllConnections();
+    await new Promise<void>((resolve) => gateway.close(() => resolve()));
+  }
 });

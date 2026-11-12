@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isMissingSession, logAuthorizationFailure } from "@/lib/dispatch/authorization-diagnostics";
 import { supabaseConfig } from "@/lib/supabase/config";
 
 export async function proxy(request: NextRequest) {
@@ -17,7 +18,9 @@ export async function proxy(request: NextRequest) {
         },
       },
     });
-    await client.auth.getClaims();
+    const started = performance.now();
+    const { error } = await client.auth.getClaims().catch((error: unknown) => ({ error }));
+    if (error && !isMissingSession(error)) logAuthorizationFailure("proxy_session", started, error);
   }
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   return response;
