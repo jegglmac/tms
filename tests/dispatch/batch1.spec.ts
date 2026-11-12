@@ -117,6 +117,8 @@ test("requires authentication, rejects invalid login, and signs out", async ({ p
   await expect(page).toHaveURL(/sign-in/);
   await page.goto(`/dispatch/${companyA}`);
   await expect(page).toHaveURL(/sign-in/);
+  const signup = await anonymous.auth.signUp({ email: `denied-${randomUUID()}@example.test`, password });
+  expect(signup.error).not.toBeNull();
   expect((await anonymous.from("loads").select("*")).error).not.toBeNull();
   expect((await save(anonymous, companyA)).error).not.toBeNull();
 });
