@@ -7,6 +7,7 @@ export async function proxy(request: NextRequest) {
   const config = supabaseConfig();
   if (config) {
     const client = createServerClient(config.url, config.key, {
+      cookieOptions: config.cookieOptions,
       cookies: {
         getAll: () => request.cookies.getAll(),
         setAll: (values) => {

@@ -110,6 +110,9 @@ test("requires authentication, rejects invalid login, and signs out", async ({ p
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("alert")).toContainText("Sign-in failed");
   await login(page);
+  const authCookies = (await page.context().cookies()).filter((cookie) => cookie.name.includes("-auth-token"));
+  expect(authCookies.length).toBeGreaterThan(0);
+  expect(authCookies.every((cookie) => cookie.httpOnly && cookie.sameSite === "Lax")).toBe(true);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL(/sign-in/);
   await page.goto(`/dispatch/${companyA}`);

@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { tail -60 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
+          npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { grep -iE 'error|SQLSTATE|applying migration|failed' "$RUNNER_TEMP/supabase-start.log" | head -25 || true; tail -12 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
           status="$(npx supabase status -o json)"
           export SUPABASE_URL=http://127.0.0.1:54321
           export SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"

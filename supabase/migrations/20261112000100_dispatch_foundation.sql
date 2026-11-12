@@ -268,10 +268,12 @@ begin
   if v_id is null then
     raise exception using errcode = '40001', message = 'Load unavailable or changed';
   end if;
-  if p_action in ('create', 'ready') then
+  if p_action = 'create' then
     insert into public.shipment_events(company_id, load_id, version, from_status, to_status, actor_id)
-      values(p_company, v_id, v_version, case when p_action = 'ready' then 'draft' end,
-        case when p_action = 'ready' then 'ready' else 'draft' end, v_actor);
+      values(p_company, v_id, v_version, null, 'draft', v_actor);
+  elsif p_action = 'ready' then
+    insert into public.shipment_events(company_id, load_id, version, from_status, to_status, actor_id)
+      values(p_company, v_id, v_version, 'draft', 'ready', v_actor);
   end if;
   insert into public.audit_logs(company_id, load_id, version, actor_id, action, request_id)
     values(p_company, v_id, v_version, v_actor, p_action, p_request);
