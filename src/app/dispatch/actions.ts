@@ -19,7 +19,7 @@ export async function saveLoad(
     return { error: "Reload the load and try again." };
   }
   const values = action === "ready" ? { data: null } : readLoad(form);
-  if (values.error) return { error: values.error };
+  if ("error" in values && values.error) return { error: values.error };
   const { data, error } = await client.rpc("tms_save_load", {
     p_company: company, p_request: requestId, p_action: action,
     p_load: loadId, p_version: version, p_data: values.data,

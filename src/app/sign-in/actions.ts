@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { database } from "@/lib/supabase/server";
 
-export async function signIn(_state: { error?: string }, form: FormData) {
+export async function signIn(_state: { error?: string }, form: FormData): Promise<{ error?: string }> {
   const client = await database();
   if (!client) return { error: "Sign-in is temporarily unavailable." };
   const email = form.get("email");

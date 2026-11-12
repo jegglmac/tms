@@ -4,8 +4,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? "";
+const url = process.env.SUPABASE_URL ?? "";
+const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
 const adminKey = process.env.TMS_TEST_SUPABASE_SERVICE_KEY ?? "";
 if (url !== "http://127.0.0.1:54321" || !key || !adminKey) {
   throw new Error("These tests require a disposable local Supabase instance.");
@@ -29,8 +29,10 @@ function noError(error: unknown) {
 }
 
 async function startApp() {
+  const appEnv = { ...process.env };
+  delete appEnv.TMS_TEST_SUPABASE_SERVICE_KEY;
   app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1"],
-    { env: process.env, stdio: "inherit" });
+    { env: appEnv, stdio: "inherit" });
   await expect.poll(async () => {
     try { return (await fetch(`${base}/sign-in`)).status; } catch { return 0; }
   }, { timeout: 30_000 }).toBe(200);
@@ -120,6 +122,8 @@ test("isolates both companies across queries, mutations, and routes", async ({ p
   const own = await save(a, companyA);
   const other = await save(b, companyB);
   noError(own.error); noError(other.error);
+  const loadNumber = await b.from("loads").select("load_number").eq("id", other.data).single();
+  expect(loadNumber.data?.load_number).toBe(1);
   for (const table of ["loads", "load_stops", "shipment_events", "audit_logs"]) {
     const blocked = await a.from(table).select("*").eq("company_id", companyB);
     noError(blocked.error);

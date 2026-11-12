@@ -19,10 +19,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.22.3'
-      - name: Resolve source-map-js security update for review
-        run: |
-          npm audit fix --package-lock-only --audit-level=high
-          node -e 'const b=require("zlib").gzipSync(require("fs").readFileSync("package-lock.json")).toString("base64"); b.match(/.{1,3000}/g).forEach((s,i)=>console.log("LOCKDATA:package-lock.json:"+i+":"+s))'
       - name: Reproducible install
         run: npm ci
       - name: Lint
@@ -36,17 +32,18 @@ jobs:
       - name: Dependency audit
         if: success() || failure()
         run: npm audit --audit-level=high
+      - name: Runtime dependency audit
+        if: success() || failure()
+        run: npm audit --omit=dev --audit-level=high
       - name: Prepare Chromium
         run: npx playwright install chromium --with-deps
       - name: Run disposable Supabase database and browser integration
         shell: bash
         run: |
           set -euo pipefail
-          npx supabase init
-          sed -i 's/^enable_signup = true/enable_signup = false/' supabase/config.toml
           npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { tail -60 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
           status="$(npx supabase status -o json)"
-          export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-          export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"
+          export SUPABASE_URL=http://127.0.0.1:54321
+          export SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"
           export TMS_TEST_SUPABASE_SERVICE_KEY="$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$status")"
           npx playwright test

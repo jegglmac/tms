@@ -4,15 +4,11 @@ import { useEffect } from 'react';
 
 export default function PWAInstallPrompt() {
   useEffect(() => {
-    // Register service worker
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
-        .then((registration) => {
-          console.log('SW registered: ', registration);
-        })
-        .catch((registrationError) => {
-          console.log('SW registration failed: ', registrationError);
-        });
+    // Existing installs update to the retirement worker. Fresh sessions use no worker.
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistration("/")
+        .then((registration) => registration?.update())
+        .catch(() => undefined);
     }
 
     // Handle install prompt
