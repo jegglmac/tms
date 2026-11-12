@@ -25,6 +25,10 @@ export default async function CompanyDispatch({
           <h1 className="text-3xl font-semibold">Dispatch Center</h1></div>
         <Link href={`${path}/new`} className="rounded bg-blue-800 px-4 py-2 text-white">New load</Link>
       </div>
+      <nav aria-label="Company rosters" className="mb-4 flex flex-wrap gap-4">
+        <Link href={`${path}/drivers`} className="text-blue-800 underline">Drivers</Link>
+        <Link href={`${path}/vehicles`} className="text-blue-800 underline">Vehicles</Link>
+      </nav>
       {list.data.length === 0 ? <p>No loads on this page.</p> : (
         <ul className="grid gap-3">
           {list.data.slice(0, 25).map((load) => <li key={load.id} className="rounded-lg border bg-white">

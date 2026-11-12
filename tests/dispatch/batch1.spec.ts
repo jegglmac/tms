@@ -283,6 +283,152 @@ test("rejects invalid DST times and keeps prototype route reachable", async ({ p
   await expect(page.getByText("Demonstration data")).toBeVisible();
 });
 
+
+const driverFields = {
+  display_name: "Synthetic Driver", work_email: "driver@example.test", work_phone: "555-0100", relationship: "contractor",
+};
+const vehicleFields = {
+  unit_number: "TMS-TEST", equipment_type: "box_truck", operating_status: "in_service",
+  make: "", model: "", model_year: "",
+};
+
+function rosterWrite(client: typeof a, company: string, kind: "drivers" | "vehicles", id: string,
+  action: string, version: number | null, data: Record<string, string> | null) {
+  return client.rpc("tms_save_roster", {
+    p_company: company, p_kind: kind, p_action: action, p_id: id, p_version: version, p_data: data,
+  });
+}
+
+test("roster RLS blocks cross-company reads and all unauthorized write paths", async ({ page }) => {
+  for (const [kind, fields] of [["drivers", driverFields], ["vehicles", vehicleFields]] as const) {
+    const foreignId = randomUUID();
+    noError((await rosterWrite(b, companyB, kind, foreignId, "create", null, fields)).error);
+    expect((await a.from(kind).select("id").eq("company_id", companyB)).data).toEqual([]);
+    expect((await a.from(kind).select("id").eq("id", foreignId)).data).toEqual([]);
+    const auditKey = kind === "drivers" ? "driver_id" : "vehicle_id";
+    expect((await a.from("roster_events").select("id").eq(auditKey, foreignId)).data).toEqual([]);
+    expect((await rosterWrite(anonymous, companyA, kind, randomUUID(), "create", null, fields)).error).not.toBeNull();
+    expect((await rosterWrite(a, companyB, kind, randomUUID(), "create", null, fields)).error?.code).toBe("42501");
+    for (const action of ["edit", "activate", "deactivate"]) {
+      const data = action === "edit" ? fields : null;
+      expect((await rosterWrite(a, companyB, kind, foreignId, action, 1, data)).error?.code).toBe("42501");
+      expect((await rosterWrite(a, companyA, kind, foreignId, action, 1, data)).error?.code).toBe("40001");
+    }
+    expect((await a.from(kind).insert({ company_id: companyA, id: randomUUID(), ...fields })).error?.code).toBe("42501");
+    expect((await a.from(kind).update({ active: false }).eq("id", foreignId)).error?.code).toBe("42501");
+    expect((await a.from(kind).delete().eq("id", foreignId)).error?.code).toBe("42501");
+    expect((await a.from("roster_events").insert({ company_id: companyA, actor_id: userA, action: "create" })).error?.code).toBe("42501");
+    expect((await a.from("roster_events").update({ action: "edit" }).eq(auditKey, foreignId)).error?.code).toBe("42501");
+    const original = await b.from(kind).select("active,version").eq("id", foreignId).single();
+    noError(original.error);
+    expect(original.data).toEqual({ active: true, version: 1 });
+    await login(page);
+    for (const path of [`/dispatch/${companyB}/${kind}`, `/dispatch/${companyA}/${kind}?record=${foreignId}`]) {
+      expect((await page.goto(path))?.status()).toBe(404);
+      await expect(page.getByText("This page could not be found.")).toBeVisible();
+    }
+  }
+
+  const membership = async (data: { role?: string; revoked_at?: string | null }) =>
+    noError((await admin.from("memberships").update(data).eq("company_id", companyA).eq("user_id", userA)).error);
+  try {
+    await membership({ role: "viewer" });
+    expect((await rosterWrite(a, companyA, "drivers", randomUUID(), "create", null, driverFields)).error?.code).toBe("42501");
+    await membership({ role: "dispatcher", revoked_at: new Date().toISOString() });
+    expect((await rosterWrite(a, companyA, "vehicles", randomUUID(), "create", null, vehicleFields)).error?.code).toBe("42501");
+  } finally {
+    await membership({ role: "dispatcher", revoked_at: null });
+  }
+});
+
+test("roster enforces normalized units, equipment types, versions, and atomic audit", async () => {
+  const id = randomUUID();
+  const unit = `U-${randomUUID().slice(0, 8)}`;
+  const payload = { ...vehicleFields, unit_number: unit };
+  noError((await rosterWrite(a, companyA, "vehicles", id, "create", null, payload)).error);
+  noError((await rosterWrite(a, companyA, "vehicles", id, "deactivate", 1, null)).error);
+  expect((await rosterWrite(a, companyA, "vehicles", randomUUID(), "create", null, {
+    ...payload, unit_number: ` ${unit.toLowerCase()} `,
+  })).error?.code).toBe("23505");
+  noError((await rosterWrite(b, companyB, "vehicles", randomUUID(), "create", null, payload)).error);
+  for (const equipment_type of ["cargo_van", "straight_truck", "tractor_trailer"]) {
+    noError((await rosterWrite(a, companyA, "vehicles", randomUUID(), "create", null, {
+      ...payload, unit_number: `${unit}-${equipment_type}`, equipment_type,
+    })).error);
+  }
+  expect((await rosterWrite(a, companyA, "vehicles", id, "edit", 1, payload)).error?.code).toBe("40001");
+  expect((await rosterWrite(a, companyA, "vehicles", id, "edit", 2, {
+    ...payload, equipment_type: "invalid",
+  })).error?.code).toBe("23514");
+  const edits = await Promise.all(["maintenance", "out_of_service"].map((operating_status) =>
+    rosterWrite(a, companyA, "vehicles", id, "edit", 2, { ...payload, operating_status })));
+  expect(edits.filter((result) => !result.error)).toHaveLength(1);
+  expect(edits.find((result) => result.error)?.error?.code).toBe("40001");
+  noError((await rosterWrite(a, companyA, "vehicles", id, "activate", 3, null)).error);
+  const row = await a.from("vehicles").select("id,active,version,operating_status").eq("id", id).single();
+  noError(row.error);
+  expect(row.data).toMatchObject({ id, active: true, version: 4 });
+  expect(["maintenance", "out_of_service"]).toContain(row.data?.operating_status);
+  const audit = await a.from("roster_events").select("*").eq("vehicle_id", id).order("version");
+  noError(audit.error);
+  expect(audit.data?.map(({ action, actor_id, version }) => [action, actor_id, version])).toEqual([
+    ["create", userA, 1], ["deactivate", userA, 2], ["edit", userA, 3], ["activate", userA, 4],
+  ]);
+  expect(Object.keys(audit.data![0]).sort()).toEqual(
+    ["action", "actor_id", "company_id", "driver_id", "id", "recorded_at", "vehicle_id", "version"],
+  );
+});
+
+test("desktop and mobile share persistent driver and vehicle rosters", async ({ page, browser }) => {
+  await login(page);
+  const mobile = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const driver = `Driver ${randomUUID().slice(0, 8)}`;
+    const unit = `MOB-${randomUUID().slice(0, 8).toUpperCase()}`;
+    const root = `/dispatch/${companyA}`;
+    await page.getByRole("link", { name: "Drivers", exact: true }).click();
+    await page.getByRole("link", { name: "New driver" }).click();
+    await page.getByLabel("Driver name").fill(driver);
+    await page.getByLabel("Work email").fill("roster-test@example.test");
+    await page.getByRole("button", { name: "Save driver" }).click();
+    await expect(page.getByRole("heading", { name: driver })).toBeVisible();
+    const driverPath = new URL(page.url()).pathname + new URL(page.url()).search;
+
+    await login(mobile);
+    await mobile.goto(driverPath);
+    await mobile.getByLabel("Driver name").fill(`${driver} Updated`);
+    await mobile.getByRole("button", { name: "Save driver" }).click();
+    await expect(mobile.getByRole("heading", { name: `${driver} Updated` })).toBeVisible();
+    await mobile.getByRole("button", { name: "Deactivate", exact: true }).click();
+    await expect(mobile.getByText("Record status: Inactive")).toBeVisible();
+    await mobile.getByRole("link", { name: "Back to drivers" }).click();
+    await mobile.getByRole("link", { name: "Inactive", exact: true }).click();
+    await mobile.getByRole("link", { name: new RegExp(driver) }).click();
+    await mobile.getByRole("button", { name: "Activate", exact: true }).click();
+    await expect(mobile.getByText("Record status: Active")).toBeVisible();
+
+    await mobile.goto(`${root}/vehicles?record=new`);
+    await mobile.getByLabel("Unit number").fill(unit);
+    await mobile.getByLabel("Equipment type").selectOption("tractor_trailer");
+    await mobile.getByLabel("Operating status").selectOption("maintenance");
+    await mobile.getByRole("button", { name: "Save vehicle" }).click();
+    await expect(mobile.getByRole("heading", { name: unit })).toBeVisible();
+    const vehiclePath = new URL(mobile.url()).pathname + new URL(mobile.url()).search;
+    expect(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+    await stopApp();
+    await startApp();
+    await page.goto(driverPath);
+    await expect(page.getByLabel("Driver name")).toHaveValue(`${driver} Updated`);
+    await expect(page.getByLabel("Work email")).toHaveValue("roster-test@example.test");
+    await page.goto(vehiclePath);
+    await expect(page.getByLabel("Equipment type")).toHaveValue("tractor_trailer");
+    await expect(page.getByLabel("Operating status")).toHaveValue("maintenance");
+  } finally {
+    await mobile.close();
+  }
+});
+
 test("draft forms have distinct keys and Mark Ready clears without a reload in development", async ({ page }) => {
   test.setTimeout(120_000);
   await stopApp();
