@@ -1,6 +1,7 @@
 import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { fetchAuthorizationSafely } from "@/lib/dispatch/authorization-diagnostics";
 import { supabaseConfig } from "./config";
 
 export async function database() {
@@ -8,6 +9,7 @@ export async function database() {
   if (!config) return null;
   const jar = await cookies();
   return createServerClient(config.url, config.key, {
+    global: { fetch: fetchAuthorizationSafely },
     cookieOptions: config.cookieOptions,
     cookies: {
       getAll: () => jar.getAll(),

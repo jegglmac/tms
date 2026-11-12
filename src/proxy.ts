@@ -1,6 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isInvalidSession, isMissingSession, logAuthorizationFailure } from "@/lib/dispatch/authorization-diagnostics";
+import { fetchAuthorizationSafely, isInvalidSession, isMissingSession, logAuthorizationFailure } from "@/lib/dispatch/authorization-diagnostics";
 import { supabaseConfig } from "@/lib/supabase/config";
 
 export async function proxy(request: NextRequest) {
@@ -9,6 +9,7 @@ export async function proxy(request: NextRequest) {
   if (config) {
     const cookieUpdates: Array<() => void> = [];
     const client = createServerClient(config.url, config.key, {
+      global: { fetch: fetchAuthorizationSafely },
       cookieOptions: config.cookieOptions,
       cookies: {
         getAll: () => request.cookies.getAll(),

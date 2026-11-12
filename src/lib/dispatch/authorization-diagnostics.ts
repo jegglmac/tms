@@ -15,7 +15,7 @@ export class DispatcherSessionUnavailable extends Error {
   }
 }
 
-function property(error: unknown, key: "code" | "name" | "status"): unknown {
+function property(error: unknown, key: "code" | "error_code" | "name" | "status"): unknown {
   if (!error || typeof error !== "object") return undefined;
   return (error as Partial<Record<typeof key, unknown>>)[key];
 }
@@ -49,3 +49,29 @@ export function logAuthorizationFailure(stage: Stage, started: number, error: un
     status: allowedStatus,
   }));
 }
+
+export const fetchAuthorizationSafely: typeof fetch = async (input, init) => {
+  const target = new URL(input instanceof Request ? input.url : input);
+  const path = target.pathname;
+  const verifiesAccess = path === "/rest/v1/rpc/tms_can_dispatch" ||
+    path === "/auth/v1/user" || path === "/auth/v1/.well-known/jwks.json" ||
+    (path === "/auth/v1/token" && target.searchParams.get("grant_type") === "refresh_token");
+  if (!verifiesAccess) return fetch(input, init);
+
+  // The SDK can emit errors during session recovery. Strip upstream error text
+  // before it reaches the SDK, retaining the status and known codes it needs.
+  const response = await fetch(input, init).catch(() => {
+    throw new TypeError("Supabase authorization request failed.");
+  });
+  if (response.status < 400) return response;
+  const body: unknown = await response.json().catch(() => null);
+  const upstreamCode = property(body, "code") ?? property(body, "error_code");
+  const code = typeof upstreamCode === "string" && safeCodes.includes(upstreamCode) ? upstreamCode : undefined;
+  const headers = new Headers({ "Content-Type": "application/json" });
+  const apiVersion = response.headers.get("x-supabase-api-version");
+  if (apiVersion === "2024-01-01") headers.set("x-supabase-api-version", apiVersion);
+  const message = "Supabase authorization request failed.";
+  return new Response(JSON.stringify({ message, msg: message, code, error_code: code }), {
+    status: response.status, headers,
+  });
+};
