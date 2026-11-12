@@ -1,8 +1,7 @@
 begin;
 
 create role tms_dispatch_executor nologin nobypassrls;
-grant usage on schema public, auth to tms_dispatch_executor;
-grant execute on function auth.uid() to tms_dispatch_executor;
+grant usage on schema public to tms_dispatch_executor;
 
 create table public.companies (
   id uuid primary key default gen_random_uuid(),
@@ -125,10 +124,20 @@ alter table public.audit_logs enable row level security;
 alter table public.idempotency_keys enable row level security;
 alter table public.dispatch_counters enable row level security;
 
+-- PostgREST sets the verified JWT claims for the active request transaction.
+-- Reading only the subject keeps the executor out of the Auth schema.
+create function public.tms_request_user_id() returns uuid
+language sql stable security invoker set search_path = ''
+as $$
+  select (nullif(current_setting('request.jwt.claims', true), '')::jsonb->>'sub')::uuid;
+$$;
+revoke all on function public.tms_request_user_id() from public, anon, authenticated;
+grant execute on function public.tms_request_user_id() to authenticated, tms_dispatch_executor;
+
 create policy own_profile on public.users for select to authenticated, tms_dispatch_executor
-  using (id = (select auth.uid()) and disabled_at is null);
+  using (id = (select public.tms_request_user_id()) and disabled_at is null);
 create policy own_memberships on public.memberships for select to authenticated, tms_dispatch_executor
-  using (user_id = (select auth.uid()) and revoked_at is null
+  using (user_id = (select public.tms_request_user_id()) and revoked_at is null
     and exists (select 1 from public.users u where u.id = user_id));
 create policy company_members on public.companies for select to authenticated, tms_dispatch_executor
   using (active and exists (select 1 from public.memberships m where m.company_id = id));
@@ -139,7 +148,7 @@ language sql stable security invoker set search_path = ''
 as $$
   select exists (
     select 1 from public.memberships m join public.companies c on c.id = m.company_id
-    where m.company_id = p_company and m.user_id = (select auth.uid()) and m.role = 'dispatcher'
+    where m.company_id = p_company and m.user_id = (select public.tms_request_user_id()) and m.role = 'dispatcher'
   );
 $$;
 revoke all on function public.tms_can_dispatch(uuid) from public, anon, authenticated;
@@ -157,9 +166,9 @@ create policy history_read on public.shipment_events for select to authenticated
 create policy audit_read on public.audit_logs for select to authenticated
   using (public.tms_can_dispatch(company_id));
 create policy key_read on public.idempotency_keys for select to tms_dispatch_executor
-  using (public.tms_can_dispatch(company_id) and actor_id = (select auth.uid()));
+  using (public.tms_can_dispatch(company_id) and actor_id = (select public.tms_request_user_id()));
 create policy load_insert on public.loads for insert to tms_dispatch_executor
-  with check (public.tms_can_dispatch(company_id) and created_by = (select auth.uid()));
+  with check (public.tms_can_dispatch(company_id) and created_by = (select public.tms_request_user_id()));
 create policy load_update on public.loads for update to tms_dispatch_executor
   using (public.tms_can_dispatch(company_id)) with check (public.tms_can_dispatch(company_id));
 create policy stop_insert on public.load_stops for insert to tms_dispatch_executor
@@ -167,11 +176,11 @@ create policy stop_insert on public.load_stops for insert to tms_dispatch_execut
 create policy stop_update on public.load_stops for update to tms_dispatch_executor
   using (public.tms_can_dispatch(company_id)) with check (public.tms_can_dispatch(company_id));
 create policy event_insert on public.shipment_events for insert to tms_dispatch_executor
-  with check (public.tms_can_dispatch(company_id) and actor_id = (select auth.uid()));
+  with check (public.tms_can_dispatch(company_id) and actor_id = (select public.tms_request_user_id()));
 create policy audit_insert on public.audit_logs for insert to tms_dispatch_executor
-  with check (public.tms_can_dispatch(company_id) and actor_id = (select auth.uid()));
+  with check (public.tms_can_dispatch(company_id) and actor_id = (select public.tms_request_user_id()));
 create policy key_insert on public.idempotency_keys for insert to tms_dispatch_executor
-  with check (public.tms_can_dispatch(company_id) and actor_id = (select auth.uid()));
+  with check (public.tms_can_dispatch(company_id) and actor_id = (select public.tms_request_user_id()));
 
 create function public.tms_save_load(
   p_company uuid, p_request uuid, p_action text, p_load uuid default null,
@@ -179,7 +188,7 @@ create function public.tms_save_load(
 ) returns uuid language plpgsql security definer set search_path = ''
 as $$
 declare
-  v_actor uuid := auth.uid();
+  v_actor uuid := public.tms_request_user_id();
   v_id uuid;
   v_number bigint;
   v_field text;

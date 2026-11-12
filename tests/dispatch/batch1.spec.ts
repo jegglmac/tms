@@ -108,7 +108,7 @@ test("requires authentication, rejects invalid login, and signs out", async ({ p
   await page.getByLabel("Email").fill(emailA);
   await page.getByLabel("Password").fill("invalid-password");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toContainText("Sign-in failed");
+  await expect(page.locator("form").getByRole("alert")).toContainText("Sign-in failed");
   await login(page);
   const authCookies = (await page.context().cookies()).filter((cookie) => cookie.name.includes("-auth-token"));
   expect(authCookies.length).toBeGreaterThan(0);
@@ -211,7 +211,7 @@ test("shows a real failed database save without losing form details", async ({ p
   const seeded = await save(a, companyA, { p_request: request, p_data: details() });
   noError(seeded.error);
   await page.getByRole("button", { name: "Save load" }).click();
-  await expect(page.getByRole("alert")).toContainText("changed");
+  await expect(page.locator("form").getByRole("alert")).toContainText("changed");
   await expect(page.getByLabel("Customer or broker reference")).toHaveValue(reference);
   expect((await a.from("loads").select("id").eq("reference", reference)).data).toEqual([]);
 });
@@ -233,6 +233,11 @@ test("desktop and mobile share create, edit, status, and restart persistence", a
     await expect(mobile.getByLabel("Customer or broker reference")).toHaveValue(desktopReference);
     await mobile.getByLabel("Cargo description").fill("Edited on mobile");
     await mobile.getByRole("button", { name: "Save load" }).click();
+    await expect.poll(async () => {
+      const updated = await a.from("loads").select("cargo").eq("reference", desktopReference).single();
+      return updated.data?.cargo;
+    }).toBe("Edited on mobile");
+    await mobile.reload();
     await mobile.getByRole("button", { name: "Mark Ready" }).click();
     await expect(mobile.getByText("draft → ready")).toBeVisible();
     await mobile.getByRole("link", { name: "Back to loads" }).click();
@@ -263,7 +268,7 @@ test("rejects invalid DST times and keeps prototype route reachable", async ({ p
   await fill(page, reference);
   await page.getByLabel("Pickup window start").fill("2027-03-14T02:30");
   await page.getByRole("button", { name: "Save load" }).click();
-  await expect(page.getByRole("alert")).toContainText("unambiguous");
+  await expect(page.locator("form").getByRole("alert")).toContainText("unambiguous");
   expect((await a.from("loads").select("id").eq("reference", reference)).data).toEqual([]);
   await page.goto("/demo/shipments");
   await expect(page.getByText("Demonstration data")).toBeVisible();
