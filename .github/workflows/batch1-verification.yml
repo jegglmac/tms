@@ -5,15 +5,36 @@ on:
 permissions:
   contents: read
 jobs:
-  toolchain:
+  baseline:
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
     steps:
-      - name: Check disposable runner prerequisites
+      - name: Check out the exact development commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.22.3'
+      - name: Resolve and record exact dependency versions
         run: |
-          set -euo pipefail
-          node --version
-          npm --version
-          npm ping --fetch-retries=1
-          docker version --format '{{.Server.Version}}'
-          docker pull public.ecr.aws/supabase/postgres:17.6.1.063
+          npm pkg delete dependencies.next-pwa dependencies.workbox-webpack-plugin
+          npm install --save-exact next@16.4.6 react react-dom @supabase/supabase-js @supabase/ssr @js-temporal/polyfill
+          npm install --save-dev --save-exact eslint-config-next@16.4.6 @playwright/test supabase
+          node -e 'for (const f of ["package.json","package-lock.json"]) { const b=require("zlib").gzipSync(require("fs").readFileSync(f)).toString("base64"); b.match(/.{1,3000}/g).forEach((s,i)=>console.log("LOCKDATA:"+f+":"+i+":"+s)) }'
+      - name: Clean install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: TypeScript
+        if: success() || failure()
+        run: npm run typecheck
+      - name: Production build
+        if: success() || failure()
+        run: npm run build
+      - name: Production dependency audit
+        if: success() || failure()
+        run: npm audit --omit=dev --audit-level=high

@@ -1,18 +1,7 @@
 import type { NextConfig } from "next";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const withPWA = require("next-pwa");
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  eslint: {
-    // Disable ESLint during builds for now
-    ignoreDuringBuilds: true,
-  },
+  poweredByHeader: false,
 };
 
-export default withPWA({
-  dest: "public",
-  register: true,
-  skipWaiting: true,
-  disable: process.env.NODE_ENV === "development",
-})(nextConfig);
+export default nextConfig;
