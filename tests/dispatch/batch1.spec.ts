@@ -28,10 +28,10 @@ function noError(error: unknown) {
   expect(error).toBeNull();
 }
 
-async function startApp() {
+async function startApp(command: "start" | "dev" = "start") {
   const appEnv = { ...process.env };
   delete appEnv.TMS_TEST_SUPABASE_SERVICE_KEY;
-  app = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1"],
+  app = spawn(process.execPath, ["node_modules/next/dist/bin/next", command, "--hostname", "127.0.0.1"],
     { env: appEnv, stdio: "inherit" });
   await expect.poll(async () => {
     try { return (await fetch(`${base}/sign-in`)).status; } catch { return 0; }
@@ -240,6 +240,9 @@ test("desktop and mobile share create, edit, status, and restart persistence", a
     await mobile.reload();
     await mobile.getByRole("button", { name: "Mark Ready" }).click();
     await expect(mobile.getByText("draft → ready")).toBeVisible();
+    await expect(mobile.getByRole("button", { name: "Mark Ready" })).toHaveCount(0);
+    await expect(mobile.getByRole("button", { name: /Saving/ })).toHaveCount(0);
+    await expect(mobile.getByRole("button", { name: "Save load" })).toBeEnabled();
     await mobile.getByRole("link", { name: "Back to loads" }).click();
     await mobile.getByRole("link", { name: "New load" }).click();
     await fill(mobile, mobileReference);
@@ -272,4 +275,32 @@ test("rejects invalid DST times and keeps prototype route reachable", async ({ p
   expect((await a.from("loads").select("id").eq("reference", reference)).data).toEqual([]);
   await page.goto("/demo/shipments");
   await expect(page.getByText("Demonstration data")).toBeVisible();
+});
+
+test("draft forms have distinct keys and Mark Ready clears without a reload in development", async ({ page }) => {
+  test.setTimeout(120_000);
+  await stopApp();
+  await startApp("dev");
+
+  const duplicateKeys: string[] = [];
+  page.on("console", (message) => {
+    if (/two children with the same key|each child in a list should have a unique/i.test(message.text())) {
+      duplicateKeys.push(message.text());
+    }
+  });
+
+  const created = await save(a, companyA);
+  noError(created.error);
+  await login(page);
+  await page.goto(`/dispatch/${companyA}/${created.data}`);
+  await expect(page.getByRole("button", { name: "Mark Ready" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Save load" })).toBeEnabled();
+  expect(duplicateKeys).toEqual([]);
+
+  await page.getByRole("button", { name: "Mark Ready" }).click();
+  await expect(page.getByText("draft → ready")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Mark Ready" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /Saving/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save load" })).toBeEnabled();
+  expect(duplicateKeys).toEqual([]);
 });

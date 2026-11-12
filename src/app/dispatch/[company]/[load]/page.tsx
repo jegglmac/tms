@@ -39,10 +39,10 @@ export default async function LoadPage({ params }: { params: Promise<{ company: 
       <Link className="text-blue-800 underline" href={`/dispatch/${company}`}>Back to loads</Link>
       <h1 className="mt-4 text-2xl font-semibold">Load #{load.load_number}</h1>
       <p className="mt-1 capitalize">Status: <strong>{load.status}</strong></p>
-      {load.status === "draft" && <ReadyForm key={load.version}
+      {load.status === "draft" && <ReadyForm key={`ready-${id}-${load.version}`}
         submit={saveLoad.bind(null, company, "ready", id, load.version)} requestId={crypto.randomUUID()} />}
       <h2 className="mb-2 mt-6 text-lg font-semibold">Edit load</h2>
-      <LoadForm key={load.version} initial={fields}
+      <LoadForm key={`edit-${id}-${load.version}`} initial={fields}
         submit={saveLoad.bind(null, company, "edit", id, load.version)} requestId={crypto.randomUUID()} />
       <h2 className="mb-2 mt-6 text-lg font-semibold">Status history</h2>
       <ol className="grid gap-2">
