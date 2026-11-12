@@ -1,0 +1,19 @@
+name: Batch 1 verification
+on:
+  push:
+    branches: [tms-pro-batch1-secure-dispatch]
+permissions:
+  contents: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Check disposable runner prerequisites
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          npm ping --fetch-retries=1
+          docker version --format '{{.Server.Version}}'
+          docker pull public.ecr.aws/supabase/postgres:17.6.1.063
