@@ -209,7 +209,15 @@ begin
       end if;
     end loop;
     if jsonb_typeof(p_data->'rateCents') is distinct from 'number' or
-      (p_data->>'rateCents') !~ '^[0-9]{1,9} (p_data->>'pickupStart')::timestamptz;
+      (p_data->>'rateCents') !~ '^[0-9]{1,9}$' then
+      raise exception using errcode = '22023', message = 'Invalid rate';
+    end if;
+    foreach v_field in array array['pickupStart', 'pickupEnd', 'deliveryStart', 'deliveryEnd'] loop
+      if coalesce(p_data->>v_field, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00Z$' then
+        raise exception using errcode = '22023', message = 'Invalid appointment';
+      end if;
+    end loop;
+    v_pickup_start := (p_data->>'pickupStart')::timestamptz;
     v_pickup_end := (p_data->>'pickupEnd')::timestamptz;
     v_delivery_start := (p_data->>'deliveryStart')::timestamptz;
     v_delivery_end := (p_data->>'deliveryEnd')::timestamptz;
@@ -274,166 +282,6 @@ begin
   elsif p_action = 'ready' then
     insert into public.shipment_events(company_id, load_id, version, from_status, to_status, actor_id)
       values(p_company, v_id, v_version, 'draft', 'ready', v_actor);
-  end if;
-  insert into public.audit_logs(company_id, load_id, version, actor_id, action, request_id)
-    values(p_company, v_id, v_version, v_actor, p_action, p_request);
-  insert into public.idempotency_keys(company_id, actor_id, request_id, request_hash, load_id)
-    values(p_company, v_actor, p_request, v_hash, v_id);
-  return v_id;
-end;
-$$;
-
--- PostgreSQL requires CREATE on the containing schema for the new owner.
-grant create on schema public to tms_dispatch_executor;
-alter function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) owner to tms_dispatch_executor;
-revoke create on schema public from tms_dispatch_executor;
-revoke all on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) from public, anon, authenticated;
-grant execute on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) to authenticated;
-commit;
- then
-      raise exception using errcode = '22023', message = 'Invalid rate';
-    end if;
-    foreach v_field in array array['pickupStart', 'pickupEnd', 'deliveryStart', 'deliveryEnd'] loop
-      if coalesce(p_data->>v_field, '') !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:00Z (p_data->>'pickupStart')::timestamptz;
-    v_pickup_end := (p_data->>'pickupEnd')::timestamptz;
-    v_delivery_start := (p_data->>'deliveryStart')::timestamptz;
-    v_delivery_end := (p_data->>'deliveryEnd')::timestamptz;
-    if v_pickup_start is null or v_pickup_end is null or v_delivery_start is null or v_delivery_end is null
-      or v_pickup_start > v_pickup_end or v_delivery_start > v_delivery_end or v_pickup_end > v_delivery_start then
-      raise exception using errcode = '22023', message = 'Invalid appointment windows';
-    end if;
-  elsif p_data is not null then
-    raise exception using errcode = '22023', message = 'Invalid status command';
-  end if;
-
-  v_hash := encode(sha256(convert_to(jsonb_build_array(p_action, p_load, p_version, p_data)::text, 'UTF8')), 'hex');
-  perform pg_advisory_xact_lock(hashtextextended(p_company::text || v_actor::text || p_request::text, 0));
-  select k.load_id, k.request_hash into v_id, v_previous_hash from public.idempotency_keys k
-    where k.company_id = p_company and k.actor_id = v_actor and k.request_id = p_request;
-  if found then
-    if v_previous_hash <> v_hash then
-      raise exception using errcode = '23505', message = 'Request already used with different data';
-    end if;
-    return v_id;
-  end if;
-
-  if p_action = 'create' then
-    insert into public.loads(company_id, counterparty, reference, rate_cents, cargo, created_by)
-      values(p_company, btrim(p_data->>'counterparty'), coalesce(btrim(p_data->>'reference'), ''),
-        (p_data->>'rateCents')::integer, btrim(p_data->>'cargo'), v_actor)
-      returning id, version into v_id, v_version;
-    insert into public.load_stops(company_id, load_id, kind, address, starts_at, ends_at)
-      values (p_company, v_id, 'pickup', btrim(p_data->>'pickupAddress'), v_pickup_start, v_pickup_end),
-             (p_company, v_id, 'delivery', btrim(p_data->>'deliveryAddress'), v_delivery_start, v_delivery_end);
-  elsif p_action = 'edit' then
-    update public.loads set counterparty = btrim(p_data->>'counterparty'),
-      reference = coalesce(btrim(p_data->>'reference'), ''), rate_cents = (p_data->>'rateCents')::integer,
-      cargo = btrim(p_data->>'cargo'), version = version + 1, updated_at = now()
-      where company_id = p_company and id = p_load and version = p_version
-      returning id, version into v_id, v_version;
-    if found then
-      update public.load_stops set address = btrim(p_data->>'pickupAddress'),
-        starts_at = v_pickup_start, ends_at = v_pickup_end
-        where company_id = p_company and load_id = v_id and kind = 'pickup';
-      if not found then raise exception 'Missing pickup stop'; end if;
-      update public.load_stops set address = btrim(p_data->>'deliveryAddress'),
-        starts_at = v_delivery_start, ends_at = v_delivery_end
-        where company_id = p_company and load_id = v_id and kind = 'delivery';
-      if not found then raise exception 'Missing delivery stop'; end if;
-    end if;
-  else
-    update public.loads set status = 'ready', version = version + 1, updated_at = now()
-      where company_id = p_company and id = p_load and version = p_version and status = 'draft'
-      returning id, version into v_id, v_version;
-  end if;
-
-  if v_id is null then
-    raise exception using errcode = '40001', message = 'Load unavailable or changed';
-  end if;
-  if p_action in ('create', 'ready') then
-    insert into public.shipment_events(company_id, load_id, version, from_status, to_status, actor_id)
-      values(p_company, v_id, v_version, case when p_action = 'ready' then 'draft' end,
-        case when p_action = 'ready' then 'ready' else 'draft' end, v_actor);
-  end if;
-  insert into public.audit_logs(company_id, load_id, version, actor_id, action, request_id)
-    values(p_company, v_id, v_version, v_actor, p_action, p_request);
-  insert into public.idempotency_keys(company_id, actor_id, request_id, request_hash, load_id)
-    values(p_company, v_actor, p_request, v_hash, v_id);
-  return v_id;
-end;
-$$;
-
--- PostgreSQL requires CREATE on the containing schema for the new owner.
-grant create on schema public to tms_dispatch_executor;
-alter function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) owner to tms_dispatch_executor;
-revoke create on schema public from tms_dispatch_executor;
-revoke all on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) from public, anon, authenticated;
-grant execute on function public.tms_save_load(uuid, uuid, text, uuid, integer, jsonb) to authenticated;
-commit;
- then
-        raise exception using errcode = '22023', message = 'Invalid appointment';
-      end if;
-    end loop;
-    v_pickup_start := (p_data->>'pickupStart')::timestamptz;
-    v_pickup_end := (p_data->>'pickupEnd')::timestamptz;
-    v_delivery_start := (p_data->>'deliveryStart')::timestamptz;
-    v_delivery_end := (p_data->>'deliveryEnd')::timestamptz;
-    if v_pickup_start is null or v_pickup_end is null or v_delivery_start is null or v_delivery_end is null
-      or v_pickup_start > v_pickup_end or v_delivery_start > v_delivery_end or v_pickup_end > v_delivery_start then
-      raise exception using errcode = '22023', message = 'Invalid appointment windows';
-    end if;
-  elsif p_data is not null then
-    raise exception using errcode = '22023', message = 'Invalid status command';
-  end if;
-
-  v_hash := encode(sha256(convert_to(jsonb_build_array(p_action, p_load, p_version, p_data)::text, 'UTF8')), 'hex');
-  perform pg_advisory_xact_lock(hashtextextended(p_company::text || v_actor::text || p_request::text, 0));
-  select k.load_id, k.request_hash into v_id, v_previous_hash from public.idempotency_keys k
-    where k.company_id = p_company and k.actor_id = v_actor and k.request_id = p_request;
-  if found then
-    if v_previous_hash <> v_hash then
-      raise exception using errcode = '23505', message = 'Request already used with different data';
-    end if;
-    return v_id;
-  end if;
-
-  if p_action = 'create' then
-    insert into public.loads(company_id, counterparty, reference, rate_cents, cargo, created_by)
-      values(p_company, btrim(p_data->>'counterparty'), coalesce(btrim(p_data->>'reference'), ''),
-        (p_data->>'rateCents')::integer, btrim(p_data->>'cargo'), v_actor)
-      returning id, version into v_id, v_version;
-    insert into public.load_stops(company_id, load_id, kind, address, starts_at, ends_at)
-      values (p_company, v_id, 'pickup', btrim(p_data->>'pickupAddress'), v_pickup_start, v_pickup_end),
-             (p_company, v_id, 'delivery', btrim(p_data->>'deliveryAddress'), v_delivery_start, v_delivery_end);
-  elsif p_action = 'edit' then
-    update public.loads set counterparty = btrim(p_data->>'counterparty'),
-      reference = coalesce(btrim(p_data->>'reference'), ''), rate_cents = (p_data->>'rateCents')::integer,
-      cargo = btrim(p_data->>'cargo'), version = version + 1, updated_at = now()
-      where company_id = p_company and id = p_load and version = p_version
-      returning id, version into v_id, v_version;
-    if found then
-      update public.load_stops set address = btrim(p_data->>'pickupAddress'),
-        starts_at = v_pickup_start, ends_at = v_pickup_end
-        where company_id = p_company and load_id = v_id and kind = 'pickup';
-      if not found then raise exception 'Missing pickup stop'; end if;
-      update public.load_stops set address = btrim(p_data->>'deliveryAddress'),
-        starts_at = v_delivery_start, ends_at = v_delivery_end
-        where company_id = p_company and load_id = v_id and kind = 'delivery';
-      if not found then raise exception 'Missing delivery stop'; end if;
-    end if;
-  else
-    update public.loads set status = 'ready', version = version + 1, updated_at = now()
-      where company_id = p_company and id = p_load and version = p_version and status = 'draft'
-      returning id, version into v_id, v_version;
-  end if;
-
-  if v_id is null then
-    raise exception using errcode = '40001', message = 'Load unavailable or changed';
-  end if;
-  if p_action in ('create', 'ready') then
-    insert into public.shipment_events(company_id, load_id, version, from_status, to_status, actor_id)
-      values(p_company, v_id, v_version, case when p_action = 'ready' then 'draft' end,
-        case when p_action = 'ready' then 'ready' else 'draft' end, v_actor);
   end if;
   insert into public.audit_logs(company_id, load_id, version, actor_id, action, request_id)
     values(p_company, v_id, v_version, v_actor, p_action, p_request);
