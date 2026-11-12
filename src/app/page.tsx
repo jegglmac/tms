@@ -10,7 +10,7 @@ import ActivityLog from '@/components/ActivityLog';
 import FleetManagement from '@/components/FleetManagement';
 import RouteOptimization from '@/components/RouteOptimization';
 import DriverPerformance from '@/components/DriverPerformance';
-import SimpleShipmentTracking from '@/components/SimpleShipmentTracking';
+import Link from 'next/link';
 import Operations from '@/components/Operations';
 import Analytics from '@/components/Analytics';
 import InstallButton from '@/components/InstallButton';
@@ -69,7 +69,7 @@ export default function Home() {
           {currentPage === 'activity-log' && <ActivityLog />}
           {currentPage === 'fleet' && <FleetManagement />}
           {currentPage === 'drivers' && <DriverPerformance />}
-          {currentPage === 'shipments' && <SimpleShipmentTracking />}
+          {currentPage === 'shipments' && <Link href="/dispatch" className="rounded bg-blue-800 px-4 py-2 text-white">Open Dispatch Center</Link>}
           {currentPage === 'routes' && (
             <RouteOptimization onOptimize={() => console.log('Optimizing routes from main page...')} />
           )}

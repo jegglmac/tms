@@ -5,13 +5,13 @@ on:
 permissions:
   contents: read
 jobs:
-  baseline:
+  verification:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 22
     env:
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
-      - name: Check out the exact development commit
+      - name: Check out development commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
@@ -19,13 +19,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.22.3'
-      - name: Resolve and record exact dependency versions
+      - name: Resolve source-map-js security update for review
         run: |
-          npm pkg delete dependencies.next-pwa dependencies.workbox-webpack-plugin
-          npm install --save-exact next@16.4.6 react react-dom @supabase/supabase-js @supabase/ssr @js-temporal/polyfill
-          npm install --save-dev --save-exact eslint-config-next@16.4.6 @playwright/test supabase
-          node -e 'for (const f of ["package.json","package-lock.json"]) { const b=require("zlib").gzipSync(require("fs").readFileSync(f)).toString("base64"); b.match(/.{1,3000}/g).forEach((s,i)=>console.log("LOCKDATA:"+f+":"+i+":"+s)) }'
-      - name: Clean install
+          npm audit fix --package-lock-only --audit-level=high
+          node -e 'const b=require("zlib").gzipSync(require("fs").readFileSync("package-lock.json")).toString("base64"); b.match(/.{1,3000}/g).forEach((s,i)=>console.log("LOCKDATA:package-lock.json:"+i+":"+s))'
+      - name: Reproducible install
         run: npm ci
       - name: Lint
         run: npm run lint
@@ -35,6 +33,20 @@ jobs:
       - name: Production build
         if: success() || failure()
         run: npm run build
-      - name: Production dependency audit
+      - name: Dependency audit
         if: success() || failure()
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
+      - name: Prepare Chromium
+        run: npx playwright install chromium --with-deps
+      - name: Run disposable Supabase database and browser integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx supabase init
+          sed -i 's/^enable_signup = true/enable_signup = false/' supabase/config.toml
+          npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { tail -60 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
+          status="$(npx supabase status -o json)"
+          export NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+          export NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"
+          export TMS_TEST_SUPABASE_SERVICE_KEY="$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$status")"
+          npx playwright test

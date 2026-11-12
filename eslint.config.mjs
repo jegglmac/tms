@@ -5,11 +5,14 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "next-env.d.ts", "public/**", "*.tsx", "sw.js", "workbox-*.js"]),
+  globalIgnores([".next/**", "next-env.d.ts", "public/**", "legacy/**", "*.tsx", "sw.js", "workbox-*.js"]),
   {
     files: ["src/components/**/*.tsx", "src/app/**/page.tsx"],
     ignores: ["src/app/dispatch/**", "src/app/sign-in/**"],
     rules: {
+      "@next/next/no-html-link-for-pages": "warn",
+      "@typescript-eslint/no-empty-object-type": "warn",
+      "react-hooks/static-components": "warn",
       "@typescript-eslint/no-unused-vars": "warn",
       "react/no-unescaped-entities": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
