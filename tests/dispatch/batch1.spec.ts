@@ -402,7 +402,9 @@ test("desktop and mobile share persistent driver and vehicle rosters", async ({ 
     await mobile.getByRole("button", { name: "Deactivate", exact: true }).click();
     await expect(mobile.getByText("Record status: Inactive")).toBeVisible();
     await mobile.getByRole("link", { name: "Back to drivers" }).click();
-    await mobile.getByRole("link", { name: "Inactive", exact: true }).click();
+    const inactiveFilter = mobile.getByRole("link", { name: "Inactive", exact: true });
+    await expect(inactiveFilter).toBeVisible();
+    await inactiveFilter.click();
     await mobile.getByRole("link", { name: new RegExp(driver) }).click();
     await mobile.getByRole("button", { name: "Activate", exact: true }).click();
     await expect(mobile.getByText("Record status: Active")).toBeVisible();

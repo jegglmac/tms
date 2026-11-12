@@ -79,9 +79,9 @@ export async function RosterPage({ kind, params, searchParams }: RosterPageProps
         <Link href={`${path}?record=new`} className="rounded bg-blue-800 px-4 py-2 text-white">New {noun}</Link>
       </div>
       <nav aria-label={`${title} status filter`} className="mb-4 flex flex-wrap gap-2">
-        {["all", "active", "inactive"].map((filter) => (
+        {Object.entries({ all: "All", active: "Active", inactive: "Inactive" }).map(([filter, label]) => (
           <Link key={filter} href={`${path}?status=${filter}`} aria-current={filter === statusFilter ? "page" : undefined}
-            className="rounded border bg-white px-3 py-2 capitalize aria-[current=page]:border-blue-800">{filter}</Link>
+            className="rounded border bg-white px-3 py-2 aria-[current=page]:border-blue-800">{label}</Link>
         ))}
       </nav>
       {data.length === 0 ? <p>No {kind} on this page.</p> : (
