@@ -1,15 +1,21 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { fetchAuthorizationSafely, isInvalidSession, isMissingSession, logAuthorizationFailure } from "@/lib/dispatch/authorization-diagnostics";
+import { authorizationTraceHeader, createAuthorizationFetch, isInvalidSession, isMissingSession, logAuthorizationFailure } from "@/lib/dispatch/authorization-diagnostics";
 import { supabaseConfig } from "@/lib/supabase/config";
 
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  const correlationId = crypto.randomUUID();
+  const forward = () => {
+    const headers = new Headers(request.headers);
+    headers.set(authorizationTraceHeader, correlationId);
+    return NextResponse.next({ request: { headers } });
+  };
+  let response = forward();
   const config = supabaseConfig();
   if (config) {
     const cookieUpdates: Array<() => void> = [];
     const client = createServerClient(config.url, config.key, {
-      global: { fetch: fetchAuthorizationSafely },
+      global: { fetch: createAuthorizationFetch(correlationId, "proxy") },
       cookieOptions: config.cookieOptions,
       cookies: {
         getAll: () => request.cookies.getAll(),
@@ -26,11 +32,11 @@ export async function proxy(request: NextRequest) {
     if (!error || isInvalidSession(error)) {
       // Keep the incoming session available for retry if Auth is temporarily unavailable.
       for (const applyCookies of cookieUpdates) applyCookies();
-      const forwarded = NextResponse.next({ request });
+      const forwarded = forward();
       for (const cookie of response.cookies.getAll()) forwarded.cookies.set(cookie);
       response = forwarded;
     }
-    if (error && !isMissingSession(error)) logAuthorizationFailure("proxy_session", started, error);
+    if (error && !isMissingSession(error)) logAuthorizationFailure("proxy_session", started, error, undefined, correlationId);
   }
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
   return response;

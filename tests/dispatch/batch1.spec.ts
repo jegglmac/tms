@@ -519,10 +519,12 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
   const address = gateway.address();
   if (!address || typeof address === "string") throw new Error("Missing disposable gateway port");
   const testGateway = { url: `http://127.0.0.1:${address.port}`, output };
-  const diagnostics = () => output.join("").split("\n").flatMap((line) => {
-    const json = line.match(/\{"event":"dispatch_authorization_failure".*\}/)?.[0];
-    return json ? [JSON.parse(json)] : [];
+  const events = (event: "dispatch_authorization_failure" | "dispatch_authorization_request") => output.join("").split("\n").flatMap((line) => {
+    const json = line.slice(line.indexOf('{"event":'));
+    if (!json.startsWith(`{"event":"${event}"`)) return [];
+    return [JSON.parse(json)];
   });
+  const diagnostics = () => events("dispatch_authorization_failure");
 
   try {
     await stopApp();
@@ -601,6 +603,19 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     await expect.poll(diagnostics).toContainEqual(expect.objectContaining({
       stage: "proxy_session", code: "refresh_token_not_found", status: 400,
     }));
+
+    const requests = events("dispatch_authorization_request");
+    const rejectedCompany = diagnostics().find((entry) => entry.stage === "company_rpc" && entry.code === "PGRST301");
+    expect(requests).toContainEqual(expect.objectContaining({
+      endpoint: "company_rpc", status: 401, code: "PGRST301",
+      correlationId: rejectedCompany.correlationId, headersMs: expect.any(Number), errorBodyMs: expect.any(Number),
+    }));
+    const unavailableSession = diagnostics().find((entry) => entry.stage === "session" && entry.status === 429);
+    for (const clientScope of ["proxy", "server"]) {
+      expect(requests).toContainEqual(expect.objectContaining({
+        endpoint: "token_refresh", status: 429, clientScope, correlationId: unavailableSession.correlationId,
+      }));
+    }
 
     for (const entry of diagnostics()) {
       expect(entry).toEqual({

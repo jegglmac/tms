@@ -1,7 +1,7 @@
 name: Batch 1 verification
 on:
   push:
-    branches: [tms-pro-batch1-secure-dispatch, tms-pro-batch2a-rosters]
+    branches: [tms-pro-batch1-secure-dispatch, tms-pro-batch2a-rosters, tms-pro-batch2a-auth-trace]
 permissions:
   contents: read
 jobs:

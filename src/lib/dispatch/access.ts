@@ -1,23 +1,24 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
-import { database } from "@/lib/supabase/server";
+import { authorizationCorrelationId, database } from "@/lib/supabase/server";
 import { DispatcherSessionUnavailable, isInvalidSession, isMissingSession, isRestTokenRejection, logAuthorizationFailure } from "./authorization-diagnostics";
 
 export const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function signedInDispatcher() {
   const started = performance.now();
-  const client = await database();
+  const correlationId = await authorizationCorrelationId();
+  const client = await database(correlationId);
   if (!client) {
-    logAuthorizationFailure("session", started, undefined);
+    logAuthorizationFailure("session", started, undefined, undefined, correlationId);
     throw new DispatcherSessionUnavailable();
   }
 
   const { data, error } = await client.auth.getClaims().catch((error: unknown) => ({ data: null, error }));
-  if (error && !isMissingSession(error)) logAuthorizationFailure("session", started, error);
+  if (error && !isMissingSession(error)) logAuthorizationFailure("session", started, error, undefined, correlationId);
   if (error && !isInvalidSession(error)) throw new DispatcherSessionUnavailable();
   if (error || !data?.claims.sub) redirect("/sign-in");
-  return { client, userId: data.claims.sub };
+  return { client, userId: data.claims.sub, correlationId };
 }
 
 export async function companyAccess(companyId: string) {
@@ -28,7 +29,7 @@ export async function companyAccess(companyId: string) {
     context.client.rpc("tms_can_dispatch", { p_company: companyId }),
   ).catch((error: unknown) => ({ data: null, error, status: undefined }));
   if (error || typeof permitted !== "boolean") {
-    logAuthorizationFailure("company_rpc", started, error, status);
+    logAuthorizationFailure("company_rpc", started, error, status, context.correlationId);
     if (isRestTokenRejection(error, status)) redirect("/sign-in");
     throw new Error("Company access could not be verified.");
   }
