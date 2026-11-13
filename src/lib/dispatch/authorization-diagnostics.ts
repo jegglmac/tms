@@ -87,11 +87,23 @@ function failureKind(error: unknown, signal?: AbortSignal | null) {
   }
 }
 
+/**
+ * Optional mitigation for local Windows/Docker Supabase testing.
+ * It deliberately does not alter requests unless explicitly opted in and
+ * the authorization endpoint is served over loopback HTTP.
+ */
+export function isLocalFreshConnectionEnabled(target: URL) {
+  return process.env.TMS_LOCAL_SUPABASE_FRESH_CONNECTIONS === "1" &&
+    target.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(target.hostname);
+}
+
 export function createAuthorizationFetch(correlationId: string, clientScope: "proxy" | "server"): typeof fetch {
   const clientId = crypto.randomUUID();
   const attempts: Partial<Record<Endpoint, number>> = {};
   return async (input, init) => {
-    const endpoint = endpointCategory(new URL(input instanceof Request ? input.url : input));
+    const target = new URL(input instanceof Request ? input.url : input);
+    const endpoint = endpointCategory(target);
     if (!endpoint) return fetch(input, init);
 
     const attempt = (attempts[endpoint] ?? 0) + 1;
@@ -120,7 +132,13 @@ export function createAuthorizationFetch(correlationId: string, clientScope: "pr
 
     let response: Response;
     try {
-      response = await fetch(input, init);
+      let requestInit = init;
+      if (isLocalFreshConnectionEnabled(target)) {
+        const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+        headers.set("connection", "close");
+        requestInit = { ...init, headers };
+      }
+      response = await fetch(input, requestInit);
     } catch (error) {
       log({ outcome: "fetch_failed", failure: failureKind(error, signal) ?? "unclassified" });
       throw new TypeError("Supabase authorization request failed.");
