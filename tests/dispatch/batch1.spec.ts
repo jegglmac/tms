@@ -32,6 +32,7 @@ function noError(error: unknown) {
 async function startApp(command: "start" | "dev" = "start", gateway?: { url: string; output: string[] }) {
   const appEnv = { ...process.env };
   delete appEnv.TMS_TEST_SUPABASE_SERVICE_KEY;
+  delete appEnv.TMS_TEST_DB_URL;
   if (gateway) appEnv.SUPABASE_URL = gateway.url;
   app = spawn(process.execPath, ["node_modules/next/dist/bin/next", command, "--hostname", "127.0.0.1"],
     { env: appEnv, stdio: gateway ? "pipe" : "inherit" });

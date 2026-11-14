@@ -1,13 +1,13 @@
-name: Batch 1 verification
+name: Dispatch and assignment verification
 on:
   push:
-    branches: [tms-pro-batch1-secure-dispatch, tms-pro-batch2a-rosters]
+    branches: [tms-pro-batch1-secure-dispatch, tms-pro-batch2a-rosters, tms-pro-batch2b1-assignments]
 permissions:
   contents: read
 jobs:
   verification:
     runs-on: ubuntu-24.04
-    timeout-minutes: 22
+    timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: '1'
     steps:
@@ -41,6 +41,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export TMS_DISPOSABLE_CI=1
+          assignment_migration=supabase/migrations/20261114000100_load_assignments.sql
+          mv "$assignment_migration" "$RUNNER_TEMP/load_assignments.sql"
           roster_migration=supabase/migrations/20261112000200_company_rosters.sql
           mv "$roster_migration" "$RUNNER_TEMP/company_rosters.sql"
           npx supabase start -x studio,imgproxy,storage-api,realtime,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/supabase-start.log" 2>&1 || { grep -iE 'error|SQLSTATE|applying migration|failed' "$RUNNER_TEMP/supabase-start.log" | head -25 || true; tail -12 "$RUNNER_TEMP/supabase-start.log"; exit 1; }
@@ -48,8 +51,12 @@ jobs:
           export SUPABASE_URL=http://127.0.0.1:54321
           export SUPABASE_PUBLISHABLE_KEY="$(jq -er '.PUBLISHABLE_KEY // .ANON_KEY' <<< "$status")"
           export TMS_TEST_SUPABASE_SERVICE_KEY="$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$status")"
+          echo "::add-mask::$SUPABASE_PUBLISHABLE_KEY"
+          echo "::add-mask::$TMS_TEST_SUPABASE_SERVICE_KEY"
           npx playwright test --grep "deduplicates simultaneous submits"
           db_url="$(jq -er '.DB_URL' <<< "$status")"
+          echo "::add-mask::$db_url"
+          export TMS_TEST_DB_URL="$db_url"
           case "$db_url" in postgres*://*@127.0.0.1:54322/*) ;; *) echo "Expected disposable loopback database"; exit 1 ;; esac
           fingerprint() {
             psql "$db_url" -v ON_ERROR_STOP=1 -Atc "select count(*) || ':' || coalesce(md5(string_agg(row_to_json(loads)::text, '' order by company_id, id)), '') from public.loads"
@@ -60,4 +67,31 @@ jobs:
           npx supabase migration up --local
           test "$(fingerprint)" = "$before"
           echo "Verified Batch 1A load records are unchanged after the roster migration."
+          npx playwright test tests/dispatch/batch1.spec.ts
+          fingerprint_tables() {
+            for table in "$@"; do
+              psql "$db_url" -X -v ON_ERROR_STOP=1 -Atc "select '$table:' || count(*) || ':' || coalesce(md5(string_agg(row_to_json(t)::text, '' order by row_to_json(t)::text)), '') from public.$table t"
+            done
+          }
+          before_assignment="$(fingerprint_tables loads load_stops shipment_events audit_logs drivers vehicles roster_events)"
+          mv "$RUNNER_TEMP/load_assignments.sql" "$assignment_migration"
+          npx supabase migration up --local
+          test "$(fingerprint_tables loads load_stops shipment_events audit_logs drivers vehicles roster_events)" = "$before_assignment"
+          echo "Verified existing dispatch and roster records survive assignment migration unchanged."
           npx playwright test
+          before_restart="$(fingerprint_tables loads drivers vehicles load_assignments load_assignment_events assignment_requests audit_logs)"
+          docker restart supabase_db_tms-batch1-dispatch > /dev/null
+          ready=0
+          for attempt in $(seq 1 30); do
+            if psql "$db_url" -X -Atc 'select 1' > /dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          test "$(fingerprint_tables loads drivers vehicles load_assignments load_assignment_events assignment_requests audit_logs)" = "$before_restart"
+          echo "Verified assignment persistence across disposable PostgreSQL restart."
+      - name: Stop runner-local Supabase without retained backup
+        if: always()
+        run: |
+          if [ -x node_modules/.bin/supabase ]; then
+            node_modules/.bin/supabase stop --no-backup
+          fi

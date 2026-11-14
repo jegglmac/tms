@@ -18,5 +18,10 @@
         }
       ]
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "tms-pro-batch2b1-assignments": false
+    }
+  }
 }
