@@ -19,6 +19,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22.22.3'
+      - name: Prepare compatible pre-migration verification code
+        run: |
+          git fetch --depth=1 origin cb2c3636ec150d931cc94d852154723824d82ed3
+          mkdir -p "$RUNNER_TEMP/accepted-baseline"
+          git archive cb2c3636ec150d931cc94d852154723824d82ed3 | tar -x -C "$RUNNER_TEMP/accepted-baseline"
       - name: Reproducible install
         run: npm ci
       - name: Lint
@@ -53,7 +58,9 @@ jobs:
           export TMS_TEST_SUPABASE_SERVICE_KEY="$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$status")"
           echo "::add-mask::$SUPABASE_PUBLISHABLE_KEY"
           echo "::add-mask::$TMS_TEST_SUPABASE_SERVICE_KEY"
-          npx playwright test --grep "deduplicates simultaneous submits"
+          baseline="$RUNNER_TEMP/accepted-baseline"
+          (cd "$baseline" && npm ci && npm run build)
+          (cd "$baseline" && npx playwright test --grep "deduplicates simultaneous submits")
           db_url="$(jq -er '.DB_URL' <<< "$status")"
           echo "::add-mask::$db_url"
           export TMS_TEST_DB_URL="$db_url"
@@ -67,7 +74,7 @@ jobs:
           npx supabase migration up --local
           test "$(fingerprint)" = "$before"
           echo "Verified Batch 1A load records are unchanged after the roster migration."
-          npx playwright test tests/dispatch/batch1.spec.ts
+          (cd "$baseline" && npx playwright test tests/dispatch/batch1.spec.ts)
           fingerprint_tables() {
             for table in "$@"; do
               psql "$db_url" -X -v ON_ERROR_STOP=1 -Atc "select '$table:' || count(*) || ':' || coalesce(md5(string_agg(row_to_json(t)::text, '' order by row_to_json(t)::text)), '') from public.$table t"

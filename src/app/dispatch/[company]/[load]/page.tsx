@@ -4,6 +4,7 @@ import { companyAccess, uuidPattern } from "@/lib/dispatch/access";
 import { localAppointment, type FieldValues } from "@/lib/dispatch/fields";
 import { saveLoad } from "../../actions";
 import { LoadForm, ReadyForm } from "../../load-form";
+import { AssignmentPanel } from "../../assignment-panel";
 
 type Stop = { kind: string; address: string; starts_at: string; ends_at: string };
 type Load = {
@@ -44,6 +45,7 @@ export default async function LoadPage({ params }: { params: Promise<{ company: 
       <h2 className="mb-2 mt-6 text-lg font-semibold">Edit load</h2>
       <LoadForm key={`edit-${id}-${load.version}`} initial={fields}
         submit={saveLoad.bind(null, company, "edit", id, load.version)} requestId={crypto.randomUUID()} />
+      <AssignmentPanel company={company} load={id} version={load.version} />
       <h2 className="mb-2 mt-6 text-lg font-semibold">Status history</h2>
       <ol className="grid gap-2">
         {history.data.map((event) => <li key={event.version} className="rounded border bg-white p-3">

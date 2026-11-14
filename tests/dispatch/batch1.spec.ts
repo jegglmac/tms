@@ -299,6 +299,59 @@ const vehicleFields = {
   make: "", model: "", model_year: "",
 };
 
+test("desktop and mobile assignments persist, reassign atomically and release explicitly", async ({ page, browser }) => {
+  const id = (await save(a, companyA)).data as string;
+  const driver = randomUUID(); const vehicle = randomUUID(); const second = randomUUID();
+  noError((await rosterWrite(a, companyA, "drivers", driver, "create", null, { ...driverFields, display_name: "UI Primary Driver" })).error);
+  noError((await rosterWrite(a, companyA, "drivers", second, "create", null, { ...driverFields, display_name: "UI Replacement Driver" })).error);
+  noError((await rosterWrite(a, companyA, "vehicles", vehicle, "create", null, { ...vehicleFields, unit_number: `UI-${vehicle.slice(0, 8)}` })).error);
+  await login(page); await page.goto(`/dispatch/${companyA}/${id}`);
+  await page.getByLabel("Assigned driver", { exact: true }).selectOption(driver);
+  await page.getByLabel("Assigned vehicle", { exact: true }).selectOption(vehicle);
+  await page.getByRole("button", { name: "Save assignments", exact: true }).click();
+  await expect(page.getByTestId("current-assignment")).toContainText("UI Primary Driver");
+  await expect(page.getByRole("button", { name: "Save assignments", exact: true })).toBeEnabled();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const mobile = await context.newPage(); await login(mobile); await mobile.goto(`/dispatch/${companyA}/${id}`);
+    await expect(mobile.getByLabel("Assigned driver", { exact: true })).toHaveValue(driver);
+    await mobile.getByLabel("Assigned driver", { exact: true }).selectOption(second);
+    await mobile.getByRole("button", { name: "Save assignments", exact: true }).click();
+    await expect(mobile.getByTestId("current-assignment")).toContainText("UI Replacement Driver");
+    await page.reload(); await expect(page.getByLabel("Assigned driver", { exact: true })).toHaveValue(second);
+    await mobile.getByLabel("Assigned driver", { exact: true }).selectOption("");
+    await mobile.getByLabel("Assigned vehicle", { exact: true }).selectOption("");
+    await mobile.getByRole("button", { name: "Save assignments", exact: true }).click();
+    await expect(mobile.getByTestId("current-assignment")).toHaveText("Driver: Unassigned · Vehicle: Unassigned");
+    await expect(mobile.getByRole("list", { name: "Assignment history" }).getByRole("listitem")).toHaveCount(3);
+    expect(await mobile.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  } finally { await context.close(); }
+  await stopApp(); await startApp(); await page.reload();
+  await expect(page.getByTestId("current-assignment")).toHaveText("Driver: Unassigned · Vehicle: Unassigned");
+  await expect(page.getByRole("list", { name: "Assignment history" }).getByRole("listitem")).toHaveCount(3);
+});
+
+test("assignment UI rejects stale edits and reservations acquired after selection", async ({ page, browser }) => {
+  const id = (await save(a, companyA)).data as string; const other = (await save(a, companyA)).data as string;
+  const driver = randomUUID();
+  noError((await rosterWrite(a, companyA, "drivers", driver, "create", null, driverFields)).error);
+  await login(page); await page.goto(`/dispatch/${companyA}/${id}`);
+  await page.getByLabel("Assigned driver", { exact: true }).selectOption(driver);
+  noError((await a.rpc("tms_set_load_assignment", { p_company: companyA, p_load: other, p_version: 1, p_request: randomUUID(), p_driver: driver, p_vehicle: null })).error);
+  await page.getByRole("button", { name: "Save assignments", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("reserved");
+  expect((await a.from("load_assignments").select("load_id").eq("load_id", id)).data).toEqual([]);
+  await page.reload();
+  await expect(page.getByLabel("Assigned driver", { exact: true }).locator(`option[value="${driver}"]`)).toBeDisabled();
+  const context = await browser.newContext();
+  try {
+    const second = await context.newPage(); await login(second); await second.goto(`/dispatch/${companyA}/${id}`);
+    noError((await save(a, companyA, { p_action: "edit", p_load: id, p_version: 1 })).error);
+    await second.getByRole("button", { name: "Save assignments", exact: true }).click();
+    await expect(second.getByRole("alert")).toContainText("This load has changed");
+  } finally { await context.close(); }
+});
+
 function rosterWrite(client: typeof a, company: string, kind: "drivers" | "vehicles", id: string,
   action: string, version: number | null, data: Record<string, string> | null) {
   return client.rpc("tms_save_roster", {
@@ -476,6 +529,8 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
   let refreshFault: { status: number; code: string } | undefined;
   let saveCalls = 0;
   let rosterSaveCalls = 0;
+  let assignmentCalls = 0;
+  let assignmentFault = false;
   let refreshCalls = 0;
 
   const gateway = createServer((incoming, outgoing) => {
@@ -489,6 +544,13 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     const refresh = endpoint.pathname === "/auth/v1/token" && endpoint.searchParams.get("grant_type") === "refresh_token";
     if (endpoint.pathname === "/rest/v1/rpc/tms_save_load") saveCalls++;
     if (endpoint.pathname === "/rest/v1/rpc/tms_save_roster") rosterSaveCalls++;
+    if (endpoint.pathname === "/rest/v1/rpc/tms_set_load_assignment") {
+      assignmentCalls++;
+      if (assignmentFault) {
+        incoming.resume(); outgoing.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ code: "XX000", message: marker }));
+        return;
+      }
+    }
     if (refresh) refreshCalls++;
     const fault = companyCheck ? rpcFault :
       refresh ? refreshFault : undefined;
@@ -576,6 +638,22 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     rpcFault = undefined;
     await page.goto(companyPath);
     await expect(page.getByRole("heading", { name: "Dispatch Center" })).toBeVisible();
+
+    const assignmentLoad = (await save(a, companyA)).data as string;
+    await page.goto(`${companyPath}/${assignmentLoad}`);
+    rpcFault = { status: 503, code: marker };
+    const assignmentBefore = assignmentCalls;
+    await page.getByRole("button", { name: "Save assignments", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Dispatch could not be loaded" })).toBeVisible();
+    expect(assignmentCalls).toBe(assignmentBefore);
+    rpcFault = undefined;
+    await page.goto(`${companyPath}/${assignmentLoad}`);
+    assignmentFault = true;
+    await page.getByRole("button", { name: "Save assignments", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("could not be confirmed");
+    expect(assignmentCalls).toBe(assignmentBefore + 1);
+    expect((await a.from("load_assignment_events").select("version").eq("load_id", assignmentLoad)).data).toEqual([]);
+    assignmentFault = false;
 
     const authCookies = (await page.context().cookies(base)).filter((cookie) => /-auth-token(?:\.\d+)?$/.test(cookie.name));
     expect(authCookies.length).toBeGreaterThan(0);
