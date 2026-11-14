@@ -232,8 +232,13 @@ function sql(statement: string) {
   if (!db || new URL(db).hostname !== "127.0.0.1" || new URL(db).port !== "54322" || process.env.TMS_DISPOSABLE_CI !== "1") {
     throw new Error("Explicit disposable CI database required for fault injection");
   }
-  // No connection string in command arguments or error output.
-  try { return execFileSync("psql", ["-X", "-v", "ON_ERROR_STOP=1", "-At"], { input: statement, encoding: "utf8", env: { ...process.env, PGDATABASE: db }, stdio: ["pipe", "pipe", "pipe"] }).trim(); }
+  // PGDATABASE is a database name, not a URI. Keep credentials out of arguments
+  // and output; pass explicit libpq connection variables to this fixture only.
+  const connection = new URL(db);
+  const sqlEnv = { ...process.env, PGHOST: connection.hostname, PGPORT: connection.port,
+    PGDATABASE: decodeURIComponent(connection.pathname.slice(1)),
+    PGUSER: decodeURIComponent(connection.username), PGPASSWORD: decodeURIComponent(connection.password) };
+  try { return execFileSync("psql", ["-X", "-v", "ON_ERROR_STOP=1", "-At"], { input: statement, encoding: "utf8", env: sqlEnv, stdio: ["pipe", "pipe", "pipe"] }).trim(); }
   catch { throw new Error("Disposable SQL verification failed (upstream output redacted)"); }
 }
 

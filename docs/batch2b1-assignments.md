@@ -139,3 +139,38 @@ settings, deployments, PRs, retained data, or database recovery operations were 
 Status: BLOCKED for acceptance and remote push pending the deployment gate and actual
 runner-local integration/build verification. This local checkpoint preserves authored
 work; it is not a verified implementation release. No Batch 2B-2 or 2B-3 work is included.
+
+## Final-verification continuation (supersedes the earlier push blocker)
+
+Owner verified both Vercel projects (tms and tms-6axy): repository jegglmac/tms,
+root ./, production main, previews all unassigned branches, no custom environments
+or deploy hooks, automatic ignored-build setting, Node 22.x. The committed root
+configuration disables exactly tms-pro-batch2b1-assignments; there are no matching
+true rules or alternative Vercel configurations. The only branch workflow has no
+deployment command, and main has no workflow-run deployment automation. The unused
+package deploy script is not invoked by installation, builds or CI. Based on these
+inspected paths and https://vercel.com/docs/project-configuration/git-configuration,
+the automatic Git deployment gate passed. This is not a claim to revoke manual/API
+deployment privileges or inventory every third-party account outside the repository.
+
+Windows Git credential helpers failed before authentication. Connected GitHub tools
+published remote commit 535f3ad71c375a145ad5b1f9df6e1af2c8584f69 from the protected
+baseline. Its tree 56c3075a50de00bdbd06806c027513e4cbbfb087 exactly equals recovered
+local commit 383be32f2a3c00a9aed98d2616dadaafc07c6c2d. No force push or existing PR
+change was used. GitHub's deployment API returned no deployments for that commit;
+only the GitHub verification check appeared, with no Vercel deployment status.
+
+First actual CI: https://github.com/jegglmac/tms/actions/runs/43581775711.
+Production build, TypeScript, lint and security gates passed. The migration precheck
+passed 1 test, accepted baseline suite passed 14 tests, and the post-migration suite
+passed 29/31 (15/17 assignment tests, all 14 accepted regressions). Both migration
+fingerprint comparisons passed. The two failures were in the direct-SQL fixture
+(event-failure injection and catalog checks), not an observed assignment RPC failure.
+Database restart verification was not reached. Runner cleanup succeeded.
+
+Narrow fixture repair: parse the local DB URL and supply PGHOST, PGPORT, PGDATABASE,
+PGUSER and PGPASSWORD separately instead of putting a URI in PGDATABASE. Credentials
+remain out of command arguments/output. Added a reporter counting completed Playwright
+expectation steps without logging their titles. No application, migration, permissions,
+retry or connection-repair behavior was changed by this repair. Acceptance depends
+on the subsequent run for the exact repaired remote commit; see its GitHub checks.
