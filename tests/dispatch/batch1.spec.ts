@@ -339,7 +339,7 @@ test("assignment UI rejects stale edits and reservations acquired after selectio
   await page.getByLabel("Assigned driver", { exact: true }).selectOption(driver);
   noError((await a.rpc("tms_set_load_assignment", { p_company: companyA, p_load: other, p_version: 1, p_request: randomUUID(), p_driver: driver, p_vehicle: null })).error);
   await page.getByRole("button", { name: "Save assignments", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("reserved");
+  await expect(page.getByRole("form", { name: "Load assignment" }).getByRole("alert")).toContainText("reserved");
   expect((await a.from("load_assignments").select("load_id").eq("load_id", id)).data).toEqual([]);
   await page.reload();
   await expect(page.getByLabel("Assigned driver", { exact: true }).locator(`option[value="${driver}"]`)).toBeDisabled();
@@ -348,7 +348,7 @@ test("assignment UI rejects stale edits and reservations acquired after selectio
     const second = await context.newPage(); await login(second); await second.goto(`/dispatch/${companyA}/${id}`);
     noError((await save(a, companyA, { p_action: "edit", p_load: id, p_version: 1 })).error);
     await second.getByRole("button", { name: "Save assignments", exact: true }).click();
-    await expect(second.getByRole("alert")).toContainText("This load has changed");
+    await expect(second.getByRole("form", { name: "Load assignment" }).getByRole("alert")).toContainText("This load has changed");
   } finally { await context.close(); }
 });
 
@@ -650,7 +650,7 @@ test("authorization failures stay closed and log only safe metadata", async ({ p
     await page.goto(`${companyPath}/${assignmentLoad}`);
     assignmentFault = true;
     await page.getByRole("button", { name: "Save assignments", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText("could not be confirmed");
+    await expect(page.getByRole("form", { name: "Load assignment" }).getByRole("alert")).toContainText("could not be confirmed");
     expect(assignmentCalls).toBe(assignmentBefore + 1);
     expect((await a.from("load_assignment_events").select("version").eq("load_id", assignmentLoad)).data).toEqual([]);
     assignmentFault = false;

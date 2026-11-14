@@ -15,7 +15,7 @@ export function AssignmentForm({ submit, driver, vehicle, drivers, vehicles, req
     {([{ name: "driver", title: "Assigned driver", value: driver, options: drivers },
       { name: "vehicle", title: "Assigned vehicle", value: vehicle, options: vehicles }] as const).map(field =>
       <label key={field.name} className="grid min-w-0 gap-1 text-sm font-medium">{field.title}
-        <select name={field.name} defaultValue={field.value} className="w-full min-w-0 rounded border bg-white px-2 py-3 text-base" disabled={pending}>
+        <select aria-label={field.title} name={field.name} defaultValue={field.value} className="w-full min-w-0 rounded border bg-white px-2 py-3 text-base" disabled={pending}>
           <option value="">Unassigned</option>
           {field.options.map(option => <option key={option.id} value={option.id} disabled={option.disabled}>
             {option.label} — {option.availability}
